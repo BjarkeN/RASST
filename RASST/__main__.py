@@ -1,4 +1,5 @@
-from RASST.debug import info, debug
+#from RASST.debug import info, debug
 
 if __name__ == '__main__':
-    info("Running RASST as main")
+    #info("Running RASST as main")
+    print("Running RASST as main")

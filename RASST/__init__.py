@@ -1,2 +1,2 @@
-from RASST.debug import info, debug
+from .debug import debug
 debug("Init was run")
