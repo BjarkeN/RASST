@@ -2,12 +2,8 @@ import logging, sys
 
 # ======================
 # Setup
-level = "DEBUG"
-if level == "DEBUG":
-    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-else:
-    logging.warning("False or non logging level set, using default [DEBUG]")
-    logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+level = "INFO"
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 # ======================
 
 # ======================

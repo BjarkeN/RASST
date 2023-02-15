@@ -1,2 +1,4 @@
-from .debug import debug
-debug("Init was run")
+print("Init was run")
+
+# Import classes
+from .georaster import georaster
