@@ -1,29 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import cm
 
 import rioxarray as rxr
 import xarray as xr
 from rasterio.crs import CRS
+from copy import deepcopy
 
 class georaster():
     
     # Setup variables
-    dim = []
-    data = []
-    data_type = "none"
-    x = []
-    y = []
-    extent_geo = []
-    extent_idx = []
-    bands = {"blue": 1,
-             "green": 2,
-             "red": 3}
     crs = 'EPSG:4326'
     
     # Setup settings
     print_level = "none" # none/major/info/all
     
-    def __init__(self, filename, **kwargs):
+    def __init__(self, filename=None, **kwargs):
         
         """_summary_
 
@@ -40,38 +32,21 @@ class georaster():
                     self.data_type = kwargs["data_type"]
                 case "printlvl":
                     self.print_level = kwargs["printlvl"]
-                case "bands":
-                    self.bands = kwargs["bands"]
                 case "epsg":
                     self.crs = kwargs["epsg"]
                 
-        # Load raster file and parameters
-        self.data = rxr.open_rasterio(filename, masked=True).squeeze() 
-        self.printinfo("File from {} was loaded".format(filename))
-        
-        # Reproject to EPSG:4326 (WGS84)
-        self.reproject()
-        
-        # Initialize the parameters
-        self.update_parameters()
-        
-        # Filetype dependent functionality
-        match self.data_type:
-            # =======================================================================
-            case "optical": # OPTICAL DATA      
-                self.printinfo("Case: optical run")
+        if filename != None:
+            # Load raster file and parameters
+            self.data = rxr.open_rasterio(filename, masked=True).squeeze() 
+            self.printinfo("File from {} was loaded".format(filename))
+            
+            # Reproject to EPSG:4326 (WGS84)
+            self.reproject()
+            
+            # Initialize the parameters
+            self.setup_parameters()
                 
-                # Convert datavalues
-                self.data.values = self.data.values.astype(float)
-                
-                # Move bands dimension to last element in the array
-                self.data = np.moveaxis(self.data.values[:], 0,2)
-                self.dim = self.data.shape # update dimensons
-            # =======================================================================
-            case "dem": # DEM DATA   
-                self.printinfo("Case: dem run")
-    
-    def update_parameters(self):
+    def setup_parameters(self):
         """_summary_
         """
         self.x = self.data.x
@@ -89,7 +64,8 @@ class georaster():
                                     self.data.x[-1],
                                     self.data.y[-1],
                                     self.data.y[1]])
-        self.printminor("Updated parameters")
+            
+        self.printminor("Setup parameters")
                 
     def reproject(self):
         """_summary_
@@ -108,21 +84,8 @@ class georaster():
             _type_: _description_
         """
         self.data = xr.concat([self.data, other.data], dim="x")
-        self.update_parameters()
+        self.setup_parameters()
         self.printinfo("Georasters combined")
-        return self
-    
-    def create_mask(self, filter="NDWI"):
-        """_summary_
-
-        Args:
-            filter (str, optional): _description_. Defaults to "NDWI".
-        """
-        self.data = normalize_image(self.data)
-        match filter:
-            case "NDWI":
-                self.data = NDWI(self.data, self.bands)
-                
         return self
         
     def printminor(self, s):
@@ -137,20 +100,170 @@ class georaster():
         if self.print_level == "info":
             print("  ",s)
             
-    def fastplot(self, bands=[3,2,1], gridsize=100):
+    def fastplot(self, gridsize=100, **kwargs):
         """Make a fast and rough plot of the raster
         """
+        band_plots = [3,2,1]
+        cmap_setting = "normal"
+        cbar = "off"
+        
+        # Go over kwargs
+        for arg in kwargs:
+            match arg:
+                case "bands":
+                    band_plots = kwargs["bands"]
+                case "cmap":
+                    cmap_setting = kwargs["cmap"]
+                case "cbar":
+                    cbar = kwargs["cbar"]
+                    
         raster_plot = self.data
         raster_plot = normalize_image(raster_plot)
         raster_plot = downsampling(raster_plot, gridsize)
-        fig, ax = plt.subplots()
+            
+        if cmap_setting == "categorical":
+            cmap_custom = cm.get_cmap('gist_ncar', len(band_plots))
+        elif cmap_setting == "normal":
+            cmap_custom = "turbo"
+        
+        plt.figure()
         if raster_plot.ndim > 2:
-            ax.imshow(raster_plot[:,:,bands], extent=self.extent_idx)
+            plt.imshow(raster_plot[:,:,band_plots], extent=self.extent_idx,
+                      cmap = cmap_custom)
         else:
-            ax.imshow(raster_plot[:,:], extent=self.extent_idx)
+            plt.imshow(raster_plot[:,:], extent=self.extent_idx,
+                      cmap = cmap_custom)
+        if cbar == "on":
+            plt.colorbar()
         plt.show()
         self.printinfo("Plotted downsampled raster")
         
+# ==============================================================================
+# INHERITED CLASSES
+
+class dem(georaster):
+    """Inherited class from georaster, describing the Digital Elevation Models 
+        (DEM)
+
+    Args:
+        georaster (_type_): _description_
+    """
+    def __init__(self, filename=None, **kwargs):
+        super().__init__(filename, **kwargs)
+        if filename != None:
+            self.printinfo("Case: dem run")
+        
+    def setup_parameters(self):
+        super().setup_parameters()
+        
+class image(georaster):
+    """Inherited class from georaster, describing the optical image
+
+    Args:
+        georaster (_type_): _description_
+    """
+    
+    bands = {"blue": 1,
+             "green": 2,
+             "red": 3}
+    
+    def __init__(self, filename=None, **kwargs):
+        super().__init__(filename, **kwargs)
+        
+        # Go over kwargs
+        for arg in kwargs:
+            match arg:
+                case "bands":
+                    self.bands = kwargs["bands"]
+        
+        if filename != None:
+            self.printinfo("Case: optical run")
+            
+            # Convert datavalues
+            self.data.values = self.data.values.astype(float)
+            
+            # Move bands dimension to last element in the array
+            self.data = np.moveaxis(self.data.values[:], 0,2)
+            self.dim = self.data.shape # update dimensons
+        
+    def setup_parameters(self):
+        super().setup_parameters()
+        
+        
+    def optical_filter(self, filter="NDWI"):
+        """_summary_
+
+        Args:
+            filter (str, optional): _description_. Defaults to "NDWI".
+        """
+        filter_data = self.data
+        match filter:
+            case "NDWI":
+                filter_data = normalize_image(NDWI(filter_data, self.bands))
+            case "NDVI":
+                filter_data = normalize_image(NDVI(filter_data, self.bands))
+                
+        filter_output = deepcopy(self)
+        filter_output.data = filter_data
+                
+        return filter_output
+    
+    def threshold(self, thr_lvl):
+        """_summary_
+
+        Args:
+            filter (str, optional): _description_. Defaults to "NDWI".
+        """
+        self.data = (self.data > thr_lvl).astype(int)
+        self.data = self.data.astype(float)
+       
+class mask(georaster):
+    """Inherited class from georaster, describing the mask
+
+    Args:
+        georaster (_type_): _description_
+    """
+    
+    flags = {"land": 0,
+             "water": 1,
+             "vegetation": 2}
+    
+    def __init__(self, filename=None, **kwargs):
+        super().__init__(filename, **kwargs)
+        
+        # Go over kwargs
+        for arg in kwargs:
+            match arg:
+                case "flags":
+                    self.bands = kwargs["flags"]
+        
+        if filename != None:
+            self.printinfo("Case: optical run")
+            
+            # Convert datavalues
+            self.data.values = self.data.values.astype(float)
+            
+            # Move bands dimension to last element in the array
+            self.data = np.moveaxis(self.data.values[:], 0,2)
+            self.dim = self.data.shape # update dimensons
+        
+    def setup_parameters(self):
+        super().setup_parameters()
+        
+    def create_from_img(*args):
+        """_summary_
+        """
+        #assert len(args) == 0, "No input to generate mask from"
+        
+        mask_output = deepcopy(args[0])
+        mask_output.data = np.zeros(mask_output.data.shape)
+        for id,val in enumerate(args):
+            mask_output.data[val.data==1] = id+1
+                
+        return mask_output
+        
+# ==============================================================================
+# FUNCTIONS
         
 def downsampling(im_, gridsize):
     """_summary_
