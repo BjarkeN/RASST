@@ -11,6 +11,7 @@ class georaster():
     
     # Setup variables
     crs = 'EPSG:4326'
+    px_size = 5 # m/px
     
     # Setup settings
     print_level = "none" # none/major/info/all
@@ -148,6 +149,9 @@ class dem(georaster):
     Args:
         georaster (_type_): _description_
     """
+    
+    px_size = 30 # m/px
+    
     def __init__(self, filename=None, **kwargs):
         super().__init__(filename, **kwargs)
         #if filename != None:
@@ -163,6 +167,7 @@ class image(georaster):
         georaster (_type_): _description_
     """
     
+    px_size = 5 # m/px
     bands = {"blue": 1,
              "green": 2,
              "red": 3}
@@ -255,13 +260,14 @@ class mask(georaster):
     def create_from_img(*args):
         """_summary_
         """
-        #assert len(args) == 0, "No input to generate mask from"
+        assert len(args) > 0, "No input to generate mask from"
         
         mask_output = deepcopy(args[0])
         mask_output.data = np.zeros(mask_output.data.shape)
         for id,val in enumerate(args):
             mask_output.data[val.data==1] = id+1
                 
+        mask_output.printinfo("Mask created from {} inputs".format(len(args)))
         return mask_output
         
 # ==============================================================================
