@@ -150,8 +150,8 @@ class dem(georaster):
     """
     def __init__(self, filename=None, **kwargs):
         super().__init__(filename, **kwargs)
-        if filename != None:
-            self.printinfo("Case: dem run")
+        #if filename != None:
+        
         
     def setup_parameters(self):
         super().setup_parameters()
@@ -176,9 +176,7 @@ class image(georaster):
                 case "bands":
                     self.bands = kwargs["bands"]
         
-        if filename != None:
-            self.printinfo("Case: optical run")
-            
+        if filename != None:            
             # Convert datavalues
             self.data.values = self.data.values.astype(float)
             
@@ -190,7 +188,7 @@ class image(georaster):
         super().setup_parameters()
         
         
-    def optical_filter(self, filter="NDWI"):
+    def optical_filter(self, filter="NDWI", thr=None):
         """_summary_
 
         Args:
@@ -204,13 +202,18 @@ class image(georaster):
                 filter_data = normalize_image(NDVI(filter_data, self.bands))
                 
         filter_output = deepcopy(self)
+                
+        if thr != None:
+            filter_data = (filter_data > thr).astype(int)
+            filter_data = filter_data.astype(float)
+        
         filter_output.data = filter_data
                 
         return filter_output
     
     def threshold(self, thr_lvl):
-        """_summary_
-
+        """ Threshold the image according to a specific level
+        
         Args:
             filter (str, optional): _description_. Defaults to "NDWI".
         """
@@ -224,9 +227,9 @@ class mask(georaster):
         georaster (_type_): _description_
     """
     
-    flags = {"land": 0,
-             "water": 1,
-             "vegetation": 2}
+    flags = {"zeroth": 0,
+             "first": 1,
+             "second": 2}
     
     def __init__(self, filename=None, **kwargs):
         super().__init__(filename, **kwargs)
@@ -238,7 +241,6 @@ class mask(georaster):
                     self.bands = kwargs["flags"]
         
         if filename != None:
-            self.printinfo("Case: optical run")
             
             # Convert datavalues
             self.data.values = self.data.values.astype(float)
