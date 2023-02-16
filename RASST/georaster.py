@@ -12,6 +12,7 @@ class georaster():
     # Setup variables
     crs = 'EPSG:4326'
     px_size = 5 # m/px
+    plot_bands = 0
     
     # Setup settings
     print_level = "none" # none/major/info/all
@@ -100,6 +101,18 @@ class georaster():
     def printinfo(self, s):
         if self.print_level == "info":
             print("  ",s)
+        
+    def get_plot_array(self):
+        """_summary_
+
+        Args:
+            filter (str, optional): _description_. Defaults to "NDWI".
+        """
+        plot_img = self.data
+        plot_img = plot_img[:,:,self.plot_bands]
+        plot_img = normalize_image(plot_img)               
+                
+        return plot_img
             
     def fastplot(self, gridsize=100, **kwargs):
         """Make a fast and rough plot of the raster
@@ -168,9 +181,10 @@ class image(georaster):
     """
     
     px_size = 5 # m/px
-    bands = {"blue": 1,
-             "green": 2,
-             "red": 3}
+    bands = {"blue": 0,
+             "green": 1,
+             "red": 2}
+    plot_bands = [2,1,0]
     
     def __init__(self, filename=None, **kwargs):
         super().__init__(filename, **kwargs)

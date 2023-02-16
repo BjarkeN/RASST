@@ -7,13 +7,23 @@ class model():
     
     
     
-    def __init__(self, altimetry, mask, dem):
+    def __init__(self, altimetry, mask, dem, location):
         
         self.altimetry = altimetry
         self.mask = mask
         self.dem = dem
+        self.location = location
         
     def sample_elevations(self, sampling="ang_rect"):
+        """_summary_
+
+        Args:
+            sampling (str, optional): _description_. Defaults to "ang_rect".
+
+        Returns:
+            _type_: _description_
+        """
+        
         
         # Determine sampling grid
         grid = self.sampling_grid(self.theta, height=300, width=100)
@@ -86,42 +96,135 @@ class model():
                     mask_vals = mask_idx[(X[i]-slice_size):(X[i]+slice_size),
                                          (Y[i]-slice_size):(Y[i]+slice_size)]
                     vals, counts = np.unique(mask_vals, return_counts=True)
-                    surface_flags.append(vals[np.argmax(counts)])
+                    surface_flags.append(np.round(vals[np.argmax(counts)]))
                     # =============
                 case "ang_rect":
                     # =============
                     # Directional rectangular sampling grid
-                    val = mask_idx[grid[0]+X[i],
-                                   grid[1]+Y[i]]
+                    mask_vals = mask_idx[grid[0]+X[i],
+                                         grid[1]+Y[i]]
                     if np.all( np.isnan( val ) ): # if there is only nans
                         surface_flags.append(np.nan)
                     else:
-                        surface_flags.append(np.nanmean(val))
+                        vals, counts = np.unique(mask_vals, return_counts=True)
+                        surface_flags.append(np.round(vals[np.argmax(counts)]))
                 # =============
         
         # Convert extracted data to numpy arrays
         elevations = np.array(elevations)
-        xi = np.array(xi)
-        yi = np.array(yi)
+        x = np.array(xi)
+        y = np.array(yi)
         surface_flags = np.array(surface_flags)
-        #vi = np.array(vi)
+        
+        # Determine across-track distance
+        x_diff = np.diff(x) * self.aspect[1]
+        y_diff = np.diff(y) * self.aspect[0]
+        along = np.r_[np.zeros(1), np.cumsum(np.sqrt(x_diff**2 + y_diff**2))]
+        along_centered = along - np.median(along)
         
         # Save internally
         self.elevations = elevations
         self.surface_flags = surface_flags
-        self.xi = xi
-        self.yi = yi
+        self.x = x
+        self.y = y
+        self.along_centered = along_centered
         
+        return elevations, surface_flags, along_centered
+    
+    def show_sampling(self, background, margin=0.05):
         
-        # Split data in water and land
-        #mi[mi<0.5] = np.nan
-        #vi[vi<0.5] = np.nan
-        #mi[mi>=0.5] = zi[mi>=0.5]
-        #vi[vi>=0.5] = zi[vi>=0.5]
-        #zi[np.logical_or(~np.isnan(mi),~np.isnan(vi))] = np.nan
+        # Test line
+        fig, ax = plt.subplots(figsize=(12,7))
+
+        # Background
+        plot_img = background.get_plot_array()
+        ax.imshow(plot_img, extent=background.extent_geo)
+
+        # Plot sat path
+        ax.plot(self.x, self.y, 'm--')
+        ax.plot(self.footprint[0], self.footprint[1], 'm-')
+        ax.plot(self.altimetry.data["longitude"][:],
+                self.altimetry.data["latitude"][:], 'ro-', markersize=2, lw=0.5)
+
+
+        v_factor = 5e-4
+        v_offset = np.nanmin(self.elevations)
+        ax.vlines(self.x, self.y+(self.elevations-v_offset)*v_factor, self.y, lw=0.5, color='b',alpha=0.05)
+        ax.plot(self.x, self.y+(self.elevations-v_offset)*v_factor, 'b')
+        #ax.vlines(xi, yi+(vi-v_offset)*v_factor, yi, lw=0.5, color='g',alpha=0.05)
+        #ax.plot(xi, yi+(vi-v_offset)*v_factor, 'g')
+        #ax.vlines(xi, yi+(zi-v_offset)*v_factor, yi, lw=0.5, color='y',alpha=0.05)
+        #ax.plot(xi, yi+(zi-v_offset)*v_factor, 'y')
+
+        legend = ["DEM Extent","Footprint Centerline", "Footprint Outline", "Satellite Track", "Water Flag", "DEM Elevation"]
+        ax.legend(legend, loc="upper left")
+        ax.set_xlabel("Longitude [deg]")
+        ax.set_ylabel("Latitude [deg]")
+
+        ax.set_xlim([self.footprint[0,:].min()-margin, self.footprint[0,:].max()+margin])
+        ax.set_ylim([self.footprint[1,:].min()-margin, self.footprint[1,:].max()+margin])
+
+        plt.show()
+    
+    def synthetic_waveform(self, show_data=False):
         
-        return elevations, surface_flags
-    #def sample_synth_waveform(self):
+        # Determine wavefront shape
+        sat_altitude = self.altimetry.data["altitude"][self.location]
+        wavefront_height = wavefront(sat_altitude, self.along_centered)
+        
+        # Smooth the surface
+        smooth_n = 5
+        smooth_zi = np.convolve(np.ones(smooth_n), self.elevations, mode="same")/smooth_n # Smooth
+        idxs = [np.arange(-int(smooth_n/2),int(smooth_n/2))]
+        smooth_zi[idxs] = np.nan
+
+        # Show data
+        if show_data == True:
+            fig, ax = plt.subplots(1,figsize=(10,4))
+            ax.plot(self.along_centered, smooth_zi, 'y')
+            
+            v_offset = np.nanmin(self.elevations)
+            ax.plot(self.along_centered, wavefront_height-2+v_offset, 'r')
+            ax.plot(self.along_centered, wavefront_height+35+v_offset, 'r')
+            ax.plot(self.along_centered, wavefront_height+58+v_offset, 'r')
+
+            ax.legend(["Land","Water","Vegetation","Wavefront Illustration"])
+            ax.set_xlabel("Crosstrack distance [m]", fontweight="bold")
+            ax.set_ylabel("Height [m]", fontweight="bold")
+            plt.show()
+
+        # Correct for wavefront
+        range_corrected_z = smooth_zi - wavefront_height
+        
+        # Determine range to center of waveform
+        midrange_height = self.altimetry.data["altitude"][self.location] - \
+            self.altimetry.data["tracker_range_calibrated"][self.location]#_diode
+        geocorr = 30#-64#40
+        binsize = 0.38
+        ranges = (256-np.arange(512))*binsize + midrange_height + geocorr
+        #print("Min {} max {}".format(ranges.min(),ranges.max()))
+
+        N = ranges.shape[0]
+        synth_ranges = ranges
+        synth_rangebins = np.arange(N)
+        synth_rangepower_z = np.zeros(N)
+        for i in range(N-1):
+            count_z = np.logical_and(range_corrected_z < synth_ranges[i],
+                                    range_corrected_z > synth_ranges[i+1])
+            along_dists_z = self.along_centered[np.logical_and(range_corrected_z < synth_ranges[i],
+                                                        range_corrected_z > synth_ranges[i+1])]
+            # Scale with distance from center
+            scale_param = 0.03 # lower number means more weight to tails
+            synth_rangepower_z[i] = count_z.sum() * illumination(along_dists_z, scale_param, mode = "sinh") if np.any(along_dists_z) else 0
+            
+        smooth_n = 4
+        synth_rangepower_z = np.convolve(np.ones(smooth_n), synth_rangepower_z, mode="same")/smooth_n # Smooth
+
+        envelope = synth_rangepower_z
+        synth_rangepower_z = synth_rangepower_z/envelope.max() # Normalize
+        envelope = envelope/envelope.max() # Normalize
+        
+        return envelope, ranges
         
     def sampling_grid(self, theta, height=300, width=100):
         
@@ -132,15 +235,15 @@ class model():
         grid = sampling_grid(cross_grid_size, alon_grid_size, theta)
         return grid
 
-    def footprint(self, loc_id, width=12000, height=300):
+    def footprint(self, width=12000, height=300):
         
         # Determine footprint
-        self.location = np.array([ self.altimetry.data["longitude"][loc_id],
-                                   self.altimetry.data["latitude"][loc_id] ])
-        self.location_next = np.array([ self.altimetry.data["longitude"][loc_id+1],
-                                        self.altimetry.data["latitude"][loc_id+1] ])
+        self.first = np.array([ self.altimetry.data["longitude"][self.location],
+                                self.altimetry.data["latitude"][self.location] ])
+        self.next = np.array([ self.altimetry.data["longitude"][self.location+1],
+                               self.altimetry.data["latitude"][self.location+1] ])
         self.footprint, self.theta, self.aspect = determine_footprint(width, height,
-                                                       self.location, self.location_next)
+                                                       self.first, self.next)
         self.centerline = np.array([np.mean(self.footprint[:,[0,3]],1),
                                     np.mean(self.footprint[:,[1,2]],1)])
         
@@ -150,6 +253,9 @@ class model():
                  np.max(self.footprint[1,:]) < np.max(self.dem.extent_geo[1,:]) ), "Footprint exceeded DEM size"
         """
         return self.footprint, self.centerline, self.theta, self.aspect
+
+# ==============================================================================
+# FUNCTIONS
 
 def determine_footprint(width, height, center, next_point):
     '''Function to determine the rotated footprint of a satellite
@@ -196,6 +302,36 @@ def determine_footprint(width, height, center, next_point):
     X_rot = ((rot @ X) + mu) / np.array([[fac_lon, fac_lat]]).T
     
     return X_rot, theta, aspect
+
+def wavefront(H, x):
+    """Calculate the vertical difference from a straight line of a wavefront
+
+    Args:
+        H (float): Height of a satellite
+        x (numpy array): distance cross track
+
+    Returns:
+        y (numpy array): height along track
+    """
+    return -(np.sqrt( H**2 - x**2 ) - H)
+
+def illumination(x, scale_param, mode = "normal"):
+    """_summary_
+
+    Args:
+        x (_type_): _description_
+        scale_param (_type_): _description_
+        mode (str, optional): _description_. Defaults to "normal".
+
+    Returns:
+        _type_: _description_
+    """
+    nu = 50
+    if mode == "normal":
+        return np.exp(-scale_param*(np.mean(x)/(1e3))**2)**2
+    elif mode == "sinh":
+        return np.exp(-scale_param*(np.sinh( 0.9 * ( np.arcsinh(np.mean(x)/1e3)) + 0))**2)
+    
 def latlon2idx(im, poly):
     poly_coord = np.flip(np.vstack((poly)).T)
     # Get ids from lat lon
@@ -206,7 +342,7 @@ def latlon2idx(im, poly):
         ids.append([id_x, id_y])
     line_index = np.array(ids)
     return line_index
-# Determine sampling grid
+
 def sampling_grid(width, height, angle):
     theta = -angle
     rot = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
@@ -217,6 +353,7 @@ def sampling_grid(width, height, angle):
     grid = rot @ grid
     grid = np.round(grid).astype(int)
     return grid
+
 def downsampling(im_in, gridsize):
     im = np.copy(im_in)
     downsample_grid = np.array(np.meshgrid(np.linspace(0,im.shape[1]-1, gridsize).astype(int),
