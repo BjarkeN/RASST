@@ -90,6 +90,8 @@ class altimetry():
             lat_low (int, optional): _description_. Defaults to -90.
             lat_high (int, optional): _description_. Defaults to 90.
         """
+        assert lat_low < lat_high, "ERROR: Resulting extraction is empty!"
+        
         alt_output = deepcopy(self)
         
         alt_output.data = sort_dict(alt_output.data, "latitude", 
