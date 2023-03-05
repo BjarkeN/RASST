@@ -166,7 +166,26 @@ class model():
 
         plt.show()
     
-    def synthetic_waveform(self, show_data=False):
+    def synthetic_waveform(self, elevations=None, flags=None, along=None, show_data=False):
+        """Forward Model for power waveform given a specific surface elevation
+
+        Args:
+            elevations (_type_, optional): _description_. Defaults to None.
+            flags (_type_, optional): _description_. Defaults to None.
+            along (_type_, optional): _description_. Defaults to None.
+            show_data (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            _type_: _description_
+        """
+        
+        # Update values if provided
+        if np.any(elevations != None):
+            self.elevations = elevations
+        if np.any(flags != None):
+            self.surface_flags = flags
+        if np.any(along != None):
+            self.along_centered = along
         
         # Determine wavefront shape
         sat_altitude = self.altimetry.data["altitude"][self.location]
@@ -194,37 +213,48 @@ class model():
             plt.show()
 
         # Correct for wavefront
-        range_corrected_z = smooth_zi - wavefront_height
+        range_corrected = smooth_zi - wavefront_height
         
         # Determine range to center of waveform
         midrange_height = self.altimetry.data["altitude"][self.location] - \
             self.altimetry.data["tracker_range_calibrated"][self.location]#_diode
         geocorr = 30#-64#40
-        binsize = 0.38
-        ranges = (256-np.arange(512))*binsize + midrange_height + geocorr
+        binsize = 0.38*2
+        #ranges = (256-np.arange(512))*binsize + midrange_height + geocorr
+        ranges = self.altimetry.data["heights"][self.location]
         #print("Min {} max {}".format(ranges.min(),ranges.max()))
 
         N = ranges.shape[0]
         synth_ranges = ranges
         synth_rangebins = np.arange(N)
-        synth_rangepower_z = np.zeros(N)
-        for i in range(N-1):
-            count_z = np.logical_and(range_corrected_z < synth_ranges[i],
-                                    range_corrected_z > synth_ranges[i+1])
-            along_dists_z = self.along_centered[np.logical_and(range_corrected_z < synth_ranges[i],
-                                                        range_corrected_z > synth_ranges[i+1])]
-            # Scale with distance from center
-            scale_param = 0.03 # lower number means more weight to tails
-            synth_rangepower_z[i] = count_z.sum() * illumination(along_dists_z, scale_param, mode = "sinh") if np.any(along_dists_z) else 0
+        
+        envelope = np.zeros(N)
+        synth_rangepower = np.zeros((np.unique(self.surface_flags).shape[0], N))
+        for f in np.unique(self.surface_flags):
+            # Extract the ranges corresponding to the current flag
+            range_corrected_z = range_corrected[self.surface_flags==f]
+            along_centered_z = self.along_centered[self.surface_flags==f]
             
-        smooth_n = 4
-        synth_rangepower_z = np.convolve(np.ones(smooth_n), synth_rangepower_z, mode="same")/smooth_n # Smooth
-
-        envelope = synth_rangepower_z
-        synth_rangepower_z = synth_rangepower_z/envelope.max() # Normalize
+            for i in range(N-1):
+                count_z = np.logical_and(range_corrected_z < synth_ranges[i],
+                                        range_corrected_z > synth_ranges[i+1])
+                along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
+                                                            range_corrected_z > synth_ranges[i+1])]
+                # Scale with distance from center
+                scale_param = 0.03 # lower number means more weight to tails
+                synth_rangepower[int(f),i] = count_z.sum() * illumination(along_dists_z, scale_param, mode = "normal") if np.any(along_dists_z) else 0
+                
+            smooth_n = 4
+            synth_rangepower[int(f),:] = np.convolve(np.ones(smooth_n), synth_rangepower[int(f),:], mode="same")/smooth_n # Smooth
+            
+            envelope += synth_rangepower[int(f),:]
+            
+            #synth_rangepower[int(f),:] = synth_rangepower[int(f),:]/envelope.max() # Normalize
+        for f in np.unique(self.surface_flags):
+            synth_rangepower[int(f),:] = synth_rangepower[int(f),:]/envelope.max() # Normalize
         envelope = envelope/envelope.max() # Normalize
         
-        return envelope, ranges
+        return envelope, synth_rangepower, ranges
         
     def sampling_grid(self, theta, height=300, width=100):
         

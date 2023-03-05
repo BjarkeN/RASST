@@ -17,6 +17,9 @@ class altimetry():
     fill = {}
     units = {}
     
+    # Constants
+    SPEED_OF_LIGHT = 299792458 # m/s
+    
     def __init__(self, filename=None, sat="sen6", **kwargs):
         
         """_summary_
@@ -63,6 +66,9 @@ class altimetry():
                     if self.longitude_format == "180":
                         self.data["longitude"][self.data["longitude"]>180] = self.data["longitude"][self.data["longitude"]>180] - 360
                         
+                    # Convert rangebins to heights
+                    self.bin2ranges()
+                        
             self.printinfo("File {} loaded".format(filename))
         
     def get_keys(filename, sat="sen6"):
@@ -106,6 +112,43 @@ class altimetry():
         self.printinfo("Extracted area of interest")
         
         return alt_output
+    
+    def bin2ranges(self, oversampling = 2):
+        """
+        """
+        assert ("altimeter_clock" in self.keys), "Altimeter clock is missing"
+        assert ("power_waveform" in self.keys), "Power Waveform is missing"
+        assert ("tracker_range_calibrated" in self.keys), "Tracker range is missing"
+        assert ("altitude" in self.keys), "Altitude is missing"
+        
+        # Create matrix of bin indexes
+        n_rows,n_cols = self.data["power_waveform"].shape
+        bin_array = np.repeat(np.array([np.arange(n_cols)]),n_rows,0) - 256 - 128
+        
+        # Create sampling
+        # This determines how the rangebins are converted to ranges in meters
+        #sampling = np.array([self.data["altimeter_clock"]/oversampling/self.SPEED_OF_LIGHT])
+        sampling = np.array([self.SPEED_OF_LIGHT/self.data["altimeter_clock"]/(oversampling*2)])
+        #sampling = np.array([self.SPEED_OF_LIGHT/320e6/(oversampling*2)])
+        bin_array = bin_array * sampling.T
+
+        # Move array to center range
+        center_range = np.array([self.data["tracker_range_calibrated"]]).T
+        bin_array = bin_array + center_range
+        
+        # Determine geophysical corrections
+        geocorr = 50
+        print("WARNING: Geophysical corrections not implemented yet, using {} m as placeholder".format(geocorr))
+        
+        # Determine height
+        altitude = np.array([self.data["altitude"]]).T
+        heights = altitude - bin_array + geocorr
+        
+        # Create variable with heights
+        self.data["heights"] = heights
+        
+        self.printinfo("Converted rangebins to heights in meters")
+        return heights
         
     def printminor(self, s):
         if self.print_level == "all":

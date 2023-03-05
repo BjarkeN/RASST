@@ -90,6 +90,20 @@ class georaster():
         self.printinfo("Georasters combined")
         return self
         
+    def stack(self, other):
+        """_summary_
+
+        Args:
+            other (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        self.data = xr.concat([self.data, other.data], dim="y")
+        self.setup_parameters()
+        self.printinfo("Georasters combined")
+        return self
+        
     def printminor(self, s):
         if self.print_level == "all":
             print("    ",s)
