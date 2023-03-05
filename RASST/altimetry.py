@@ -20,7 +20,7 @@ class altimetry():
     # Constants
     SPEED_OF_LIGHT = 299792458 # m/s
     
-    def __init__(self, filename=None, sat="sen6", **kwargs):
+    def __init__(self, filename=None, l2_filename=None, sat="sen6", **kwargs):
         
         """_summary_
 
@@ -67,7 +67,7 @@ class altimetry():
                         self.data["longitude"][self.data["longitude"]>180] = self.data["longitude"][self.data["longitude"]>180] - 360
                         
                     # Convert rangebins to heights
-                    self.bin2ranges()
+                    self.readgeo(l2_filename)
                         
             self.printinfo("File {} loaded".format(filename))
         
@@ -99,6 +99,11 @@ class altimetry():
         alt_output.data = sort_dict(alt_output.data, "latitude", 
                                      alt_output.data["latitude"]<lat_high)
         
+        alt_output.geo = sort_dict(alt_output.geo, "latitude", 
+                                     alt_output.geo["latitude"]>lat_low)
+        alt_output.geo = sort_dict(alt_output.geo, "latitude", 
+                                     alt_output.geo["latitude"]<lat_high)
+        
         self.printinfo("Extracted area between {}N and {}N".format(lat_low,lat_high))
         
         return alt_output
@@ -115,9 +120,76 @@ class altimetry():
         
         return alt_output
     
+    def readgeo(self, l2_filename):
+        """
+        """
+        
+        dat = nc.Dataset(l2_filename)
+        l2_20_keys = ["altitude", "latitude", "longitude","epoch_ocean", "noise_floor_ocean", "range_ocean",
+                    "range_ocog","latitude", "ocean_geo_corrections", "index_1hz_measurement", "l1b_record_counter", "l2_record_counter", "ssha"]
+        l2_01_keys = ["dac", "distance_to_coast", "geoid", "internal_tide", "inv_bar_cor", "iono_cor_alt_filtered",
+                    "l2_record_counter", "load_tide_sol1","load_tide_sol2","mean_dynamic_topography",
+                    "model_dry_tropo_cor_measurement_altitude", "model_wet_tropo_cor_measurement_altitude",
+                    "pole_tide", "solid_earth_tide", "surface_classification_flag","mean_sea_surface_sol1","mean_sea_surface_sol2"]
+        l2_01_keys_ku = ["atm_cor_sig0", "iono_cor_gim","sig0_ocean"]
+
+        #print(dat["data_20"]["ku"]["latitude"][46900])
+        #dat["data_20"]["ku"].variables.keys()
+        geo = {}
+        geo_01 = {}
+        geo_01["latitude"] = dat["data_01"]["latitude"][:]
+        geo_20 = {}
+        for k in l2_20_keys:
+            geo_20[k] = dat["data_20"]["ku"][k][:]
+            geo[k] = geo_20[k]
+        for k in l2_01_keys:
+            geo_01[k] = dat["data_01"][k][:]
+            geo[k] = np.interp(geo_20["latitude"], geo_01["latitude"],geo_01[k])
+        for k in l2_01_keys_ku:
+            geo_01[k] = dat["data_01"]["ku"][k][:]
+            geo[k] = np.interp(geo_20["latitude"], geo_01["latitude"],geo_01[k])
+
+        self.geo = geo
+        print("Geophysical data read from L2 file")
+    
     def bin2ranges(self, oversampling = 2):
+        """ Determine elevation from rangebins in the power_waveform
         """
-        """
+        
+        # Determine sum of geophysical corrections
+        geocorr = np.zeros(self.geo["latitude"].shape)
+        for k in ["dac","internal_tide","load_tide_sol1","model_dry_tropo_cor_measurement_altitude","model_wet_tropo_cor_measurement_altitude",\
+                "pole_tide","solid_earth_tide","iono_cor_gim"]:
+            geocorr += self.geo[k]
+            
+        # Determine rangebins
+        # Create matrix of bin indexes
+        n_rows,n_cols = self.data["power_waveform"].shape
+        bin_array = np.repeat(np.array([np.arange(n_cols)]),n_rows,0) - 256
+
+        # Create sampling
+        # This determines how the rangebins are converted to ranges in meters
+        sampling = np.array([self.SPEED_OF_LIGHT/self.data["altimeter_clock"]/(oversampling*2)])
+        bin_array = bin_array * sampling.T
+
+        # Move array to center range
+        center_range = np.array([self.data["tracker_range_calibrated"]]).T
+        bin_array = bin_array + center_range
+
+        # Determine height
+        altitude = np.array([self.data["altitude"]]).T
+        heights = altitude - bin_array
+
+        # Downsample
+        heights = heights.T
+        heights = heights - geocorr - self.geo["geoid"]# - geo["mean_dynamic_topography"]
+        heights = heights.T
+        
+        # Create variable with heights
+        self.data["heights"] = heights
+        
+        print("Converted rangebins to heights")
+        """ =============== OLD METHOD =================
         assert ("altimeter_clock" in self.keys), "Altimeter clock is missing"
         assert ("power_waveform" in self.keys), "Power Waveform is missing"
         assert ("tracker_range_calibrated" in self.keys), "Tracker range is missing"
@@ -150,6 +222,9 @@ class altimetry():
         self.data["heights"] = heights
         
         self.printinfo("Converted rangebins to heights in meters")
+        return heights
+        """
+        
         return heights
         
     def printminor(self, s):

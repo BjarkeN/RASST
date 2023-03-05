@@ -216,10 +216,10 @@ class model():
         range_corrected = smooth_zi - wavefront_height
         
         # Determine range to center of waveform
-        midrange_height = self.altimetry.data["altitude"][self.location] - \
-            self.altimetry.data["tracker_range_calibrated"][self.location]#_diode
-        geocorr = 30#-64#40
-        binsize = 0.38*2
+        #midrange_height = self.altimetry.data["altitude"][self.location] - \
+        #    self.altimetry.data["tracker_range_calibrated"][self.location]#_diode
+        #geocorr = 30#-64#40
+        #binsize = 0.38*2
         #ranges = (256-np.arange(512))*binsize + midrange_height + geocorr
         ranges = self.altimetry.data["heights"][self.location]
         #print("Min {} max {}".format(ranges.min(),ranges.max()))
