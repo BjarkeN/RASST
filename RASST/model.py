@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from copy import deepcopy
@@ -14,7 +15,7 @@ class model():
         self.dem = dem
         self.location = location
         
-    def sample_elevations(self, sampling="ang_rect"):
+    def sample_elevations(self, sampling="ang_rect", N_samplepoints=4000):
         """_summary_
 
         Args:
@@ -40,7 +41,7 @@ class model():
         line_index = latlon2idx(self.dem, line_loc)
 
         # Create line over dem
-        N_samplepoints = 4000
+        #N_samplepoints = 4000
         X = np.linspace(line_index[0,1], line_index[1,1], N_samplepoints).astype(int)
         Y = np.linspace(line_index[0,0], line_index[1,0], N_samplepoints).astype(int)
         x = np.linspace(line_loc[0][1], line_loc[0][0], N_samplepoints)
@@ -116,6 +117,9 @@ class model():
         y = np.array(yi)
         surface_flags = np.array(surface_flags)
         
+        # Create reflectivity factor
+        self.reflectance = np.ones(np.unique(surface_flags).shape[0])
+        
         # Determine across-track distance
         x_diff = np.diff(x) * self.aspect[1]
         y_diff = np.diff(y) * self.aspect[0]
@@ -149,8 +153,14 @@ class model():
 
         v_factor = 5e-4
         v_offset = np.nanmin(self.elevations)
-        ax.vlines(self.x, self.y+(self.elevations-v_offset)*v_factor, self.y, lw=0.5, color='b',alpha=0.05)
-        ax.plot(self.x, self.y+(self.elevations-v_offset)*v_factor, 'b')
+        #ax.vlines(self.x, self.y+(self.elevations-v_offset)*v_factor, self.y, lw=0.5, color='b',alpha=0.05)
+        #ax.plot(self.x, self.y+(self.elevations-v_offset)*v_factor, 'b')
+        cols = ["y","b","g"]
+        for f in np.unique(self.surface_flags):
+            f = int(f)
+            aoi = (self.surface_flags == f)
+            ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5, color=cols[f],alpha=0.05)
+            ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1, cols[f])
         #ax.vlines(xi, yi+(vi-v_offset)*v_factor, yi, lw=0.5, color='g',alpha=0.05)
         #ax.plot(xi, yi+(vi-v_offset)*v_factor, 'g')
         #ax.vlines(xi, yi+(zi-v_offset)*v_factor, yi, lw=0.5, color='y',alpha=0.05)
@@ -166,7 +176,8 @@ class model():
 
         plt.show()
     
-    def synthetic_waveform(self, elevations=None, flags=None, along=None, show_data=False):
+    def synthetic_waveform(self, elevations=None, flags=None, along=None, reflectance=None,
+                           show_data=False, output="numpy"):
         """Forward Model for power waveform given a specific surface elevation
 
         Args:
@@ -184,28 +195,47 @@ class model():
             self.elevations = elevations
         if np.any(flags != None):
             self.surface_flags = flags
+        if np.any(reflectance != None):
+            self.reflectance = reflectance
         if np.any(along != None):
             self.along_centered = along
         
         # Determine wavefront shape
         sat_altitude = self.altimetry.data["altitude"][self.location]
+        #if output == "torch":
+        #    along = self.along_centered.detach().numpy()
+        #    wavefront_height = wavefront(sat_altitude, along)
+        #else:
+        #    wavefront_height = wavefront(sat_altitude, self.along_centered)
         wavefront_height = wavefront(sat_altitude, self.along_centered)
         
         # Smooth the surface
         smooth_n = 5
-        smooth_zi = np.convolve(np.ones(smooth_n), self.elevations, mode="same")/smooth_n # Smooth
-        idxs = [np.arange(-int(smooth_n/2),int(smooth_n/2))]
-        smooth_zi[idxs] = np.nan
+        #smooth_zi = np.convolve(np.ones(smooth_n), self.elevations, mode="same")/smooth_n # Smooth
+        #idxs = [np.arange(-int(smooth_n/2),int(smooth_n/2))]
+        #smooth_zi[idxs] = np.nan
+        if output == "torch":
+            ma = torch.nn.Conv1d(in_channels=1, out_channels=1, kernel_size=smooth_n,
+                        stride=1, padding="same", bias=False)
+            ma.weight.data = torch.ones(ma.weight.data.size())
+            smooth_zi = ma(self.elevations[None,:])/smooth_n
+            smooth_zi = smooth_zi[0]
+        else:
+            smooth_zi = self.elevations
 
         # Show data
         if show_data == True:
             fig, ax = plt.subplots(1,figsize=(10,4))
-            ax.plot(self.along_centered, smooth_zi, 'y')
+            cols = ["y","b","g"]
+            for f in np.unique(self.surface_flags):
+                f = int(f)
+                aoi = (self.surface_flags == f)
+                ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1, cols[f])
             
             v_offset = np.nanmin(self.elevations)
             ax.plot(self.along_centered, wavefront_height-2+v_offset, 'r')
             ax.plot(self.along_centered, wavefront_height+35+v_offset, 'r')
-            ax.plot(self.along_centered, wavefront_height+58+v_offset, 'r')
+            #ax.plot(self.along_centered, wavefront_height+58+v_offset, 'r')
 
             ax.legend(["Land","Water","Vegetation","Wavefront Illustration"])
             ax.set_xlabel("Crosstrack distance [m]", fontweight="bold")
@@ -213,23 +243,24 @@ class model():
             plt.show()
 
         # Correct for wavefront
-        range_corrected = smooth_zi - wavefront_height
+        if output == "torch":
+            range_corrected = smooth_zi - torch.from_numpy(wavefront_height)
+        else:
+            range_corrected = smooth_zi - wavefront_height
         
-        # Determine range to center of waveform
-        #midrange_height = self.altimetry.data["altitude"][self.location] - \
-        #    self.altimetry.data["tracker_range_calibrated"][self.location]#_diode
-        #geocorr = 30#-64#40
-        #binsize = 0.38*2
-        #ranges = (256-np.arange(512))*binsize + midrange_height + geocorr
+        # Determine range
         ranges = self.altimetry.data["heights"][self.location]
-        #print("Min {} max {}".format(ranges.min(),ranges.max()))
 
         N = ranges.shape[0]
         synth_ranges = ranges
-        synth_rangebins = np.arange(N)
         
-        envelope = np.zeros(N)
-        synth_rangepower = np.zeros((np.unique(self.surface_flags).shape[0], N))
+        if output == "torch":
+            envelope = torch.zeros(N)
+            synth_rangepower = torch.zeros((np.unique(self.surface_flags).shape[0], N))
+        else:
+            envelope = np.zeros(N)
+            synth_rangepower = np.zeros((np.unique(self.surface_flags).shape[0], N))
+        
         for f in np.unique(self.surface_flags):
             # Extract the ranges corresponding to the current flag
             range_corrected_z = range_corrected[self.surface_flags==f]
@@ -238,23 +269,52 @@ class model():
             for i in range(N-1):
                 count_z = np.logical_and(range_corrected_z < synth_ranges[i],
                                         range_corrected_z > synth_ranges[i+1])
+                #if output == "torch":
+                #    along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
+                #                                                range_corrected_z > synth_ranges[i+1]).bool()]
+                #else:
+                #    along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
+                #                                                range_corrected_z > synth_ranges[i+1])]
                 along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
-                                                            range_corrected_z > synth_ranges[i+1])]
+                                                                range_corrected_z > synth_ranges[i+1])]
                 # Scale with distance from center
-                scale_param = 0.03 # lower number means more weight to tails
-                synth_rangepower[int(f),i] = count_z.sum() * illumination(along_dists_z, scale_param, mode = "normal") if np.any(along_dists_z) else 0
+                scale_param = 0.03#0.03 # lower number means more weight to tails
+                #if output == "torch":
+                #    synth_rangepower[int(f),i] = count_z.sum() * illumination(along_dists_z, scale_param, 
+                #                                                              mode="normal", output="torch") if torch.any(along_dists_z) else 0
+                #else:
+                #    synth_rangepower[int(f),i] = count_z.sum() * illumination(along_dists_z, scale_param, 
+                #                                                              mode="normal") if np.any(along_dists_z) else 0
+                synth_rangepower[int(f),i] = count_z.sum()*self.reflectance[int(f)] \
+                                                                * illumination(along_dists_z, scale_param, 
+                                                                              mode="normal") if np.any(along_dists_z) else 0
                 
-            smooth_n = 4
-            synth_rangepower[int(f),:] = np.convolve(np.ones(smooth_n), synth_rangepower[int(f),:], mode="same")/smooth_n # Smooth
+            smooth_n = 3
+            #synth_rangepower[int(f),:] = np.convolve(np.ones(smooth_n), synth_rangepower[int(f),:], mode="same")/smooth_n # Smooth
+            
+            #if output == "torch":
+            #    ma = torch.nn.Conv1d(in_channels=1, out_channels=1, kernel_size=smooth_n,
+            #                stride=1, padding="same", bias=False)
+            #    ma.weight.data = torch.ones(ma.weight.data.size())
+            #    synth_rangepower[int(f),:] = (ma(synth_rangepower[int(f),:][None,:]))[0]
+                #synth_rangepower_ = synth_rangepower[int(f),:]
+                #synth_rangepower_ = (ma(synth_rangepower_[None,:])/smooth_n)
+                #synth_rangepower[int(f),:] = synth_rangepower_[0]
             
             envelope += synth_rangepower[int(f),:]
             
             #synth_rangepower[int(f),:] = synth_rangepower[int(f),:]/envelope.max() # Normalize
         for f in np.unique(self.surface_flags):
             synth_rangepower[int(f),:] = synth_rangepower[int(f),:]/envelope.max() # Normalize
+            
+            
         envelope = envelope/envelope.max() # Normalize
         
-        return envelope, synth_rangepower, ranges
+        match output:
+            case "numpy":
+                return envelope, synth_rangepower, ranges
+            case "torch":
+                return envelope[:256]
         
     def sampling_grid(self, theta, height=300, width=100):
         
@@ -345,7 +405,7 @@ def wavefront(H, x):
     """
     return -(np.sqrt( H**2 - x**2 ) - H)
 
-def illumination(x, scale_param, mode = "normal"):
+def illumination(x, scale_param, mode = "normal", output="numpy"):
     """_summary_
 
     Args:
@@ -358,7 +418,10 @@ def illumination(x, scale_param, mode = "normal"):
     """
     nu = 50
     if mode == "normal":
-        return np.exp(-scale_param*(np.mean(x)/(1e3))**2)**2
+        if output == "torch":
+            return torch.exp(-scale_param*(torch.mean(x)/(1e3))**2)**2
+        elif output == "numpy":
+            return np.exp(-scale_param*(np.mean(x)/(1e3))**2)**2
     elif mode == "sinh":
         return np.exp(-scale_param*(np.sinh( 0.9 * ( np.arcsinh(np.mean(x)/1e3)) + 0))**2)
     
