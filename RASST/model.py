@@ -184,7 +184,7 @@ class model():
 
         plt.show()
     
-    def synthetic_waveform(self, elevations=None, flags=None, along=None, reflectance=None,
+    def synthetic_waveform(self, elevations=None, flags=None, along=None, reflectance=None, illumination_weight=0.1,
                            show_data=False, output="numpy"):
         """Forward Model for power waveform given a specific surface elevation
 
@@ -290,7 +290,7 @@ class model():
                 along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
                                                                 range_corrected_z > synth_ranges[i+1])]
                 # Scale with distance from center
-                scale_param = 0.09#0.03 # lower number means more weight to tails
+                scale_param = illumination_weight#0.03 # lower number means more weight to tails
                 synth_rangepower[f_idx,i] = count_z.sum()*self.reflectance[f_idx] \
                                                                 * illumination(along_dists_z, scale_param, 
                                                                               mode="normal") if np.any(along_dists_z) else 0
