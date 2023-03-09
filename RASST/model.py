@@ -294,7 +294,7 @@ class model():
                 if np.any(along_dists_z):
                     synth_rangepower[f_idx,i] = count_z.sum()* \
                                                 self.reflectance[f_idx]* \
-                                                illumination(torch.from_numpy(along_dists_z),
+                                                illumination(along_dist_z,
                                                              scale_param, 
                                                              mode="normal",
                                                              output=output)
@@ -433,6 +433,7 @@ def illumination(x, scale_param, mode = "normal", output="numpy"):
     nu = 50
     if mode == "normal":
         if output == "torch":
+            x = torch.from_numpy(x)
             return torch.exp(-scale_param*(torch.mean(x)/(1e3))**2)**2
         elif output == "numpy":
             return np.exp(-scale_param*(np.mean(x)/(1e3))**2)**2
