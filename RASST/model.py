@@ -293,7 +293,7 @@ class model():
                 scale_param = illumination_weight#0.03 # lower number means more weight to tails
                 synth_rangepower[f_idx,i] = count_z.sum()*self.reflectance[f_idx] \
                                                                 * illumination(along_dists_z, scale_param, 
-                                                                              mode="normal") if np.any(along_dists_z) else 0
+                                                                              mode="normal", output=output) if np.any(along_dists_z) else 0
             
             smooth_n = 3
             #synth_rangepower[f_idx,:] = np.convolve(np.ones(smooth_n), synth_rangepower[int(f),:], mode="same")/smooth_n # Smooth
