@@ -155,12 +155,20 @@ class model():
         v_offset = np.nanmin(self.elevations)
         #ax.vlines(self.x, self.y+(self.elevations-v_offset)*v_factor, self.y, lw=0.5, color='b',alpha=0.05)
         #ax.plot(self.x, self.y+(self.elevations-v_offset)*v_factor, 'b')
-        cols = ["y","b","g"]
-        for f in np.unique(self.surface_flags):
-            f = int(f)
-            aoi = (self.surface_flags == f)
-            ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5, color=cols[f],alpha=0.05)
-            ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1, cols[f])
+        if np.unique(self.surface_flags).shape[0] == 3:
+            cols = ["y","b","g"]
+            for f in np.unique(self.surface_flags):
+                f = int(f)
+                aoi = (self.surface_flags == f)
+                ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5, color=cols[f],alpha=0.05)
+                ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1, cols[f])
+        else:
+            for f in np.unique(self.surface_flags):
+                f = int(f)
+                aoi = (self.surface_flags == f)
+                ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5,alpha=0.05)
+                ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1)
+            
         #ax.vlines(xi, yi+(vi-v_offset)*v_factor, yi, lw=0.5, color='g',alpha=0.05)
         #ax.plot(xi, yi+(vi-v_offset)*v_factor, 'g')
         #ax.vlines(xi, yi+(zi-v_offset)*v_factor, yi, lw=0.5, color='y',alpha=0.05)
@@ -226,18 +234,27 @@ class model():
         # Show data
         if show_data == True:
             fig, ax = plt.subplots(1,figsize=(10,4))
-            cols = ["y","b","g"]
-            for f in np.unique(self.surface_flags):
-                f = int(f)
-                aoi = (self.surface_flags == f)
-                ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1, cols[f])
-            
-            v_offset = np.nanmin(self.elevations)
-            ax.plot(self.along_centered, wavefront_height-2+v_offset, 'r')
-            ax.plot(self.along_centered, wavefront_height+35+v_offset, 'r')
-            #ax.plot(self.along_centered, wavefront_height+58+v_offset, 'r')
+            if np.unique(self.surface_flags).shape[0] == 3:
+                cols = ["y","b","g"]
+                for f in np.unique(self.surface_flags):
+                    f = int(f)
+                    aoi = (self.surface_flags == f)
+                    ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1, cols[f])
+                
+                v_offset = np.nanmin(self.elevations)
+                ax.plot(self.along_centered, wavefront_height-2+v_offset, 'r')
+                ax.plot(self.along_centered, wavefront_height+35+v_offset, 'r')
+                #ax.plot(self.along_centered, wavefront_height+58+v_offset, 'r')
 
-            ax.legend(["Land","Water","Vegetation","Wavefront Illustration"])
+                ax.legend(["Land","Water","Vegetation","Wavefront Illustration"])
+            else:
+                for f in np.unique(self.surface_flags):
+                    f = int(f)
+                    aoi = (self.surface_flags == f)
+                    ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1)
+                v_offset = np.nanmin(self.elevations)
+                ax.plot(self.along_centered, wavefront_height-2+v_offset, 'r')
+                ax.plot(self.along_centered, wavefront_height+35+v_offset, 'r')
             ax.set_xlabel("Crosstrack distance [m]", fontweight="bold")
             ax.set_ylabel("Height [m]", fontweight="bold")
             plt.show()
@@ -260,7 +277,8 @@ class model():
         else:
             envelope = np.zeros(N)
             synth_rangepower = np.zeros((np.unique(self.surface_flags).shape[0], N))
-        
+            
+        f_idx = 0
         for f in np.unique(self.surface_flags):
             # Extract the ranges corresponding to the current flag
             range_corrected_z = range_corrected[self.surface_flags==f]
@@ -269,46 +287,29 @@ class model():
             for i in range(N-1):
                 count_z = np.logical_and(range_corrected_z < synth_ranges[i],
                                         range_corrected_z > synth_ranges[i+1])
-                #if output == "torch":
-                #    along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
-                #                                                range_corrected_z > synth_ranges[i+1]).bool()]
-                #else:
-                #    along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
-                #                                                range_corrected_z > synth_ranges[i+1])]
                 along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
                                                                 range_corrected_z > synth_ranges[i+1])]
                 # Scale with distance from center
-                scale_param = 0.03#0.03 # lower number means more weight to tails
-                #if output == "torch":
-                #    synth_rangepower[int(f),i] = count_z.sum() * illumination(along_dists_z, scale_param, 
-                #                                                              mode="normal", output="torch") if torch.any(along_dists_z) else 0
-                #else:
-                #    synth_rangepower[int(f),i] = count_z.sum() * illumination(along_dists_z, scale_param, 
-                #                                                              mode="normal") if np.any(along_dists_z) else 0
-                synth_rangepower[int(f),i] = count_z.sum()*self.reflectance[int(f)] \
+                scale_param = 0.09#0.03 # lower number means more weight to tails
+                synth_rangepower[f_idx,i] = count_z.sum()*self.reflectance[f_idx] \
                                                                 * illumination(along_dists_z, scale_param, 
                                                                               mode="normal") if np.any(along_dists_z) else 0
-                
+            
             smooth_n = 3
-            #synth_rangepower[int(f),:] = np.convolve(np.ones(smooth_n), synth_rangepower[int(f),:], mode="same")/smooth_n # Smooth
+            #synth_rangepower[f_idx,:] = np.convolve(np.ones(smooth_n), synth_rangepower[int(f),:], mode="same")/smooth_n # Smooth
+                        
+            # Add individual contribution to the full waveform
+            envelope += synth_rangepower[f_idx,:]
             
-            #if output == "torch":
-            #    ma = torch.nn.Conv1d(in_channels=1, out_channels=1, kernel_size=smooth_n,
-            #                stride=1, padding="same", bias=False)
-            #    ma.weight.data = torch.ones(ma.weight.data.size())
-            #    synth_rangepower[int(f),:] = (ma(synth_rangepower[int(f),:][None,:]))[0]
-                #synth_rangepower_ = synth_rangepower[int(f),:]
-                #synth_rangepower_ = (ma(synth_rangepower_[None,:])/smooth_n)
-                #synth_rangepower[int(f),:] = synth_rangepower_[0]
-            
-            envelope += synth_rangepower[int(f),:]
-            
-            #synth_rangepower[int(f),:] = synth_rangepower[int(f),:]/envelope.max() # Normalize
+            f_idx += 1
+        # Normalize the individual contributions
+        f_idx = 0
         for f in np.unique(self.surface_flags):
-            synth_rangepower[int(f),:] = synth_rangepower[int(f),:]/envelope.max() # Normalize
+            synth_rangepower[f_idx,:] = synth_rangepower[f_idx,:]/envelope.max()
+            f_idx += 1
             
-            
-        envelope = envelope/envelope.max() # Normalize
+        # Normalize the envelope
+        envelope = envelope/envelope.max()
         
         match output:
             case "numpy":
