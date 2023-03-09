@@ -294,7 +294,7 @@ class model():
                 if np.any(along_dists_z):
                     synth_rangepower[f_idx,i] = count_z.sum()* \
                                                 self.reflectance[f_idx]* \
-                                                illumination(along_dist_z,
+                                                illumination(along_dists_z,
                                                              scale_param, 
                                                              mode="normal",
                                                              output=output)
