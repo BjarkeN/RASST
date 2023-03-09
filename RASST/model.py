@@ -308,6 +308,16 @@ class model():
             synth_rangepower[f_idx,:] = synth_rangepower[f_idx,:]/envelope.max()
             f_idx += 1
             
+        # Smooth the envelope
+        n_smooth = 3
+        if output == "torch":
+            kernel = torch.ones(n_smooth)
+            kernel = kernel[None,None,:]
+            # Apply smoothing
+            envelope = (torch.conv1d(envelope[None,None,:], kernel)/n_smooth)[0,0,:]
+        else:
+            envelope = np.convolve(np.ones(n_smooth), envelope, mode="same")/n_smooth
+            
         # Normalize the envelope
         envelope = envelope/envelope.max()
         
