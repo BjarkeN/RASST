@@ -184,7 +184,7 @@ class model():
 
         plt.show()
     
-    def synthetic_waveform(self, elevations=None, flags=None, along=None, reflectance=None, illumination_weight=0.1,
+    def synthetic_waveform(self, elevations=None, flags=None, along=None, reflectance=None, illumination_weight=0.01,
                            show_data=False, output="numpy"):
         """Forward Model for power waveform given a specific surface elevation
 
@@ -433,7 +433,6 @@ def illumination(x, scale_param, mode = "normal", output="numpy"):
     nu = 50
     if mode == "normal":
         if output == "torch":
-            x = torch.from_numpy(x)
             return torch.exp(-scale_param*(torch.mean(x)/(1e3))**2)**2
         elif output == "numpy":
             return np.exp(-scale_param*(np.mean(x)/(1e3))**2)**2
