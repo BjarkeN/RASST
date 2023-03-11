@@ -207,7 +207,12 @@ class model():
             self.reflectance = reflectance
         if np.any(along != None):
             self.along_centered = along
-        
+            
+        # Change along_centered to be torch.tensor to allow computation
+        if output == "torch":
+            if torch.is_tensor(self.along_centered) == False:
+                self.along_centered = torch.from_numpy(self.along_centered)
+                
         # Determine wavefront shape
         sat_altitude = self.altimetry.data["altitude"][self.location]
         #if output == "torch":
@@ -261,7 +266,7 @@ class model():
 
         # Correct for wavefront
         if output == "torch":
-            range_corrected = smooth_zi - torch.from_numpy(wavefront_height)
+            range_corrected = smooth_zi - wavefront_height
         else:
             range_corrected = smooth_zi - wavefront_height
         
@@ -288,21 +293,32 @@ class model():
                 count_z = np.logical_and(range_corrected_z < synth_ranges[i],
                                         range_corrected_z > synth_ranges[i+1])
                 along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
-                                                                range_corrected_z > synth_ranges[i+1])]
+                                                                range_corrected_z > synth_ranges[i+1]).bool()]
                 # Scale with distance from center
                 if output == "torch":
-                    scale_param = illumination_weight.detach().numpy()#0.03 # lower number means more weight to tails
+                    scale_param = 0.005#illumination_weight#0.03 # lower number means more weight to tails
                 else:
                     scale_param = illumination_weight#0.03 # lower number means more weight to tails
-                if np.any(along_dists_z):
-                    synth_rangepower[f_idx,i] = count_z.sum()* \
-                                                self.reflectance[f_idx]* \
-                                                illumination(along_dists_z,
-                                                             scale_param, 
-                                                             mode="normal",
-                                                             output="numpy")#output)
+                if output == "torch":
+                    if torch.any(along_dists_z):
+                        synth_rangepower[f_idx,i] = count_z.sum()* \
+                                                    self.reflectance[f_idx]* \
+                                                    illumination(along_dists_z,
+                                                                scale_param, 
+                                                                mode="normal",
+                                                                output="torch")#output)
+                    else:
+                        synth_rangepower[f_idx,i] = 0
                 else:
-                    synth_rangepower[f_idx,i] = 0
+                    if np.any(along_dists_z):
+                        synth_rangepower[f_idx,i] = count_z.sum()* \
+                                                    self.reflectance[f_idx]* \
+                                                    illumination(along_dists_z,
+                                                                scale_param, 
+                                                                mode="normal",
+                                                                output="numpy")#output)
+                    else:
+                        synth_rangepower[f_idx,i] = 0
                         
             # Add individual contribution to the full waveform
             envelope += synth_rangepower[f_idx,:]
@@ -420,7 +436,10 @@ def wavefront(H, x):
     Returns:
         y (numpy array): height along track
     """
-    return -(np.sqrt( H**2 - x**2 ) - H)
+    if torch.is_tensor(x) == True:
+        return -(torch.sqrt( H**2 - x**2 ) - H)
+    else:
+        return -(np.sqrt( H**2 - x**2 ) - H)
 
 def illumination(x, scale_param, mode = "normal", output="numpy"):
     """_summary_
