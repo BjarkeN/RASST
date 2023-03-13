@@ -117,6 +117,9 @@ class model():
         y = np.array(yi)
         surface_flags = np.array(surface_flags)
         
+        # Reset lowest number of surface flag
+        surface_flags[surface_flags==0] += np.unique(surface_flags)[1]-1
+        
         # Create reflectivity factor
         self.reflectance = np.ones(np.unique(surface_flags).shape[0])
         
@@ -292,11 +295,15 @@ class model():
             for i in range(N-1):
                 count_z = np.logical_and(range_corrected_z < synth_ranges[i],
                                         range_corrected_z > synth_ranges[i+1])
-                along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
-                                                                range_corrected_z > synth_ranges[i+1]).bool()]
+                if output == "torch":
+                    along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
+                                                                    range_corrected_z > synth_ranges[i+1]).bool()]
+                else:
+                    along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
+                                                                    range_corrected_z > synth_ranges[i+1])]
                 # Scale with distance from center
                 if output == "torch":
-                    scale_param = 0.005#illumination_weight#0.03 # lower number means more weight to tails
+                    scale_param = illumination_weight#0.03 # lower number means more weight to tails
                 else:
                     scale_param = illumination_weight#0.03 # lower number means more weight to tails
                 if output == "torch":
@@ -331,7 +338,7 @@ class model():
             f_idx += 1
             
         # Smooth the envelope
-        n_smooth = 3
+        n_smooth = 5
         if output == "torch":
             kernel = torch.ones(n_smooth)
             kernel = kernel[None,None,:]
