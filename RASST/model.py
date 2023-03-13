@@ -296,7 +296,7 @@ class model():
                                                                 range_corrected_z > synth_ranges[i+1]).bool()]
                 # Scale with distance from center
                 if output == "torch":
-                    scale_param = 0.005#illumination_weight#0.03 # lower number means more weight to tails
+                    scale_param = illumination_weight#0.03 # lower number means more weight to tails
                 else:
                     scale_param = illumination_weight#0.03 # lower number means more weight to tails
                 if output == "torch":
