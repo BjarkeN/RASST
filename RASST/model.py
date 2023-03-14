@@ -354,7 +354,7 @@ class model():
             case "numpy":
                 return envelope, synth_rangepower, ranges
             case "torch":
-                return envelope[:256]
+                return envelope[:256], synth_rangepower[:256], ranges[256]
         
     def sampling_grid(self, theta, height=300, width=100):
         
