@@ -314,16 +314,16 @@ class model():
         
         if output == "torch":
             envelope = torch.zeros(N)
-            synth_rangepower = torch.zeros((np.unique(self.surface_flags).shape[0], N))
+            synth_rangepower = torch.zeros((np.unique(self.segment_id).shape[0], N))
         else:
             envelope = np.zeros(N)
-            synth_rangepower = np.zeros((np.unique(self.surface_flags).shape[0], N))
+            synth_rangepower = np.zeros((np.unique(self.segment_id).shape[0], N))
             
         f_idx = 0
-        for f in np.unique(self.surface_flags):
+        for f in np.unique(self.segment_id):
             # Extract the ranges corresponding to the current flag
-            range_corrected_z = range_corrected[self.surface_flags==f]
-            along_centered_z = self.along_centered[self.surface_flags==f]
+            range_corrected_z = range_corrected[self.segment_id==f]
+            along_centered_z = self.along_centered[self.segment_id==f]
             
             for i in range(N-1):
                 count_z = np.logical_and(range_corrected_z < synth_ranges[i],
@@ -366,7 +366,7 @@ class model():
             f_idx += 1
         # Normalize the individual contributions
         f_idx = 0
-        for f in np.unique(self.surface_flags):
+        for f in np.unique(self.segment_id):
             synth_rangepower[f_idx,:] = synth_rangepower[f_idx,:]/envelope.max()
             f_idx += 1
             
