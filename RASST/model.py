@@ -15,7 +15,7 @@ class model():
         self.dem = dem
         self.location = location
         
-    def sample_elevations(self, sampling="ang_rect", N_samplepoints=4000):
+    def sample_elevations(self, sampling="ang_rect", N_samplepoints=4000, n_segments=10):
         """_summary_
 
         Args:
@@ -28,6 +28,9 @@ class model():
         
         # Determine sampling grid
         grid = self.sampling_grid(self.theta, height=300, width=100)
+        
+        # Determine number of sampling id's
+        self.n_sampling_ids = n_segments
         
         # Determine footprint centerline
         line_loc = np.copy(self.centerline).T
@@ -129,16 +132,21 @@ class model():
         along = np.r_[np.zeros(1), np.cumsum(np.sqrt(x_diff**2 + y_diff**2))]
         along_centered = along - np.median(along)
         
+        # Pass segment id's
+        segment_id = np.linspace(0, self.n_sampling_ids, N_samplepoints).astype(int)
+        
         # Save internally
         self.elevations = elevations
         self.surface_flags = surface_flags
         self.x = x
         self.y = y
         self.along_centered = along_centered
+        self.segment_id = segment_id
         
-        return elevations, surface_flags, along_centered
+        
+        return elevations, surface_flags, along_centered, segment_id
     
-    def show_sampling(self, background, margin=0.05):
+    def show_sampling(self, background, margin=0.05, colors="flags"):
         
         # Test line
         fig, ax = plt.subplots(figsize=(12,7))
@@ -158,19 +166,26 @@ class model():
         v_offset = np.nanmin(self.elevations)
         #ax.vlines(self.x, self.y+(self.elevations-v_offset)*v_factor, self.y, lw=0.5, color='b',alpha=0.05)
         #ax.plot(self.x, self.y+(self.elevations-v_offset)*v_factor, 'b')
-        if np.unique(self.surface_flags).shape[0] == 3:
-            cols = ["y","b","g"]
-            for f in np.unique(self.surface_flags):
-                f = int(f)
-                aoi = (self.surface_flags == f)
-                ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5, color=cols[f],alpha=0.05)
-                ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1, cols[f])
-        else:
-            for f in np.unique(self.surface_flags):
-                f = int(f)
-                aoi = (self.surface_flags == f)
-                ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5,alpha=0.05)
-                ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1)
+        match colors:
+            case "flags":
+                for f in np.unique(self.surface_flags):
+                    f = int(f)
+                    aoi = (self.surface_flags == f)
+                    ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5,alpha=0.05)
+                    ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1)
+            case "segments":
+                for f in np.unique(self.segment_id):
+                    f = int(f)
+                    aoi = (self.segment_id == f)
+                    ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5,alpha=0.05)
+                    ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1)
+            case "land_water_ground":
+                cols = ["y","b","g"]
+                for f in np.unique(self.surface_flags):
+                    f = int(f)
+                    aoi = (self.surface_flags == f)
+                    ax.vlines(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor, self.y[aoi], lw=0.5, color=cols[f],alpha=0.05)
+                    ax.scatter(self.x[aoi], self.y[aoi]+(self.elevations[aoi]-v_offset)*v_factor,1, cols[f])
             
         #ax.vlines(xi, yi+(vi-v_offset)*v_factor, yi, lw=0.5, color='g',alpha=0.05)
         #ax.plot(xi, yi+(vi-v_offset)*v_factor, 'g')
@@ -186,9 +201,55 @@ class model():
         ax.set_ylim([self.footprint[1,:].min()-margin, self.footprint[1,:].max()+margin])
 
         plt.show()
+        
+    def show_profile(self, colors="flags"):
+        # Determine wavefront shape
+        sat_altitude = self.altimetry.data["altitude"][self.location]
+        wavefront_height = wavefront(sat_altitude, self.along_centered)
+        
+        # Smooth the surface
+        #smooth_n = 5
+        #smooth_zi = np.convolve(np.ones(smooth_n), self.elevations, mode="same")/smooth_n
+        smooth_zi = self.elevations
+
+        fig, ax = plt.subplots(figsize=(10,4))
+        
+        match colors:
+            case "flags":
+                for f in np.unique(self.surface_flags):
+                    f = int(f)
+                    aoi = (self.surface_flags == f)
+                    ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1)
+                v_offset = np.nanmin(self.elevations)
+                ax.plot(self.along_centered, wavefront_height-2+v_offset, 'k--')
+                ax.plot(self.along_centered, wavefront_height+35+v_offset, 'k--', label='_nolegend_')
+                ax.legend([ i for i in range(np.unique(self.surface_flags).shape[0])] + ["Altimeter Wavefront"])
+            case "segments":
+                for f in np.unique(self.segment_id):
+                    f = int(f)
+                    aoi = (self.segment_id == f)
+                    ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1)
+                v_offset = np.nanmin(self.elevations)
+                ax.plot(self.along_centered, wavefront_height-2+v_offset, 'k--')
+                ax.plot(self.along_centered, wavefront_height+35+v_offset, 'k--', label='_nolegend_')
+                ax.legend([ i for i in range(np.unique(self.segment_id).shape[0])] + ["Altimeter Wavefront"])
+            case "land_water_vegetation":
+                cols = ["y","b","g"]
+                for f in np.unique(self.surface_flags):
+                    f = int(f)
+                    aoi = (self.surface_flags == f)
+                    ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1, cols[f])
+                v_offset = np.nanmin(self.elevations)
+                ax.plot(self.along_centered, wavefront_height-2+v_offset, 'k--')
+                ax.plot(self.along_centered, wavefront_height+35+v_offset, 'k--', label='_nolegend_')
+                ax.legend(["Land","Water","Vegetation","Wavefront Illustration"])
+
+        ax.set_xlabel("Crosstrack distance [m]", fontweight="bold")
+        ax.set_ylabel("Height [m]", fontweight="bold")
+        plt.show()
     
     def synthetic_waveform(self, elevations=None, flags=None, along=None, reflectance=None, illumination_weight=0.01,
-                           show_data=False, output="numpy"):
+                           output="numpy"):
         """Forward Model for power waveform given a specific surface elevation
 
         Args:
@@ -238,34 +299,6 @@ class model():
             smooth_zi = smooth_zi[0]
         else:
             smooth_zi = self.elevations
-
-        # Show data
-        if show_data == True:
-            fig, ax = plt.subplots(1,figsize=(10,4))
-            if np.unique(self.surface_flags).shape[0] == 3:
-                cols = ["y","b","g"]
-                for f in np.unique(self.surface_flags):
-                    f = int(f)
-                    aoi = (self.surface_flags == f)
-                    ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1, cols[f])
-                
-                v_offset = np.nanmin(self.elevations)
-                ax.plot(self.along_centered, wavefront_height-2+v_offset, 'r')
-                ax.plot(self.along_centered, wavefront_height+35+v_offset, 'r')
-                #ax.plot(self.along_centered, wavefront_height+58+v_offset, 'r')
-
-                ax.legend(["Land","Water","Vegetation","Wavefront Illustration"])
-            else:
-                for f in np.unique(self.surface_flags):
-                    f = int(f)
-                    aoi = (self.surface_flags == f)
-                    ax.scatter(self.along_centered[aoi], smooth_zi[aoi], 1)
-                v_offset = np.nanmin(self.elevations)
-                ax.plot(self.along_centered, wavefront_height-2+v_offset, 'r')
-                ax.plot(self.along_centered, wavefront_height+35+v_offset, 'r')
-            ax.set_xlabel("Crosstrack distance [m]", fontweight="bold")
-            ax.set_ylabel("Height [m]", fontweight="bold")
-            plt.show()
 
         # Correct for wavefront
         if output == "torch":
