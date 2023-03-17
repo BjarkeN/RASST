@@ -232,7 +232,7 @@ class model():
                 v_offset = np.nanmin(self.elevations)
                 ax.plot(self.along_centered, wavefront_height-2+v_offset, 'k--')
                 ax.plot(self.along_centered, wavefront_height+35+v_offset, 'k--', label='_nolegend_')
-                ax.legend([ i for i in range(np.unique(self.segment_id).shape[0])] + ["Altimeter Wavefront"])
+                ax.legend([ i for i in range(np.unique(self.segment_id).shape[0])] + ["Wavefront"])
             case "land_water_vegetation":
                 cols = ["y","b","g"]
                 for f in np.unique(self.surface_flags):
