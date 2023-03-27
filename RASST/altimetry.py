@@ -16,6 +16,7 @@ class altimetry():
     info = {}
     fill = {}
     units = {}
+    filename = ""
     
     # Constants
     SPEED_OF_LIGHT = 299792458 # m/s
@@ -44,6 +45,8 @@ class altimetry():
         if filename != None:
             # Load file
             data_ = nc.Dataset(filename)
+            # Save the files name, remove the path
+            self.filename = filename[-118:-20]
             
             # Determine the satellite from which the data is frome
             # (this determines the structure of the data in the nc file)
