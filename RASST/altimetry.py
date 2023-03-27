@@ -185,6 +185,7 @@ class altimetry():
         heights = heights.T
         heights = heights - geocorr - self.geo["geoid"]# - geo["mean_dynamic_topography"]
         heights = heights.T
+        self.geocorr = geocorr
         
         # Create variable with heights
         self.data["heights"] = heights
