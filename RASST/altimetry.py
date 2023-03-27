@@ -153,6 +153,7 @@ class altimetry():
             geo[k] = np.interp(geo_20["latitude"], geo_01["latitude"],geo_01[k])
 
         self.geo = geo
+        self.geokeys = l2_20_keys + l2_01_keys + l2_01_keys_ku
         print("Geophysical data read from L2 file")
     
     def bin2ranges(self, oversampling = 2):
@@ -187,6 +188,7 @@ class altimetry():
         heights = heights.T
         heights = heights - geocorr - self.geo["geoid"]# - geo["mean_dynamic_topography"]
         heights = heights.T
+        self.geocorr = geocorr
         
         # Create variable with heights
         self.data["heights"] = heights
