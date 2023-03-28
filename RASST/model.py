@@ -3,6 +3,16 @@ import torch
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from copy import deepcopy
+from datetime import datetime
+import json
+
+# Libraries for bayesian inference
+import torch
+import pyro
+from pyro.infer import MCMC, NUTS, Predictive
+import numpyro
+import jax.numpy as jnp
+from jax import random
 
 class model():
     
@@ -143,7 +153,6 @@ class model():
         self.along_centered = along_centered
         self.segment_id = segment_id
         
-        
         return elevations, surface_flags, along_centered, segment_id
     
     def show_sampling(self, background, margin=0.05, colors="flags"):
@@ -249,7 +258,7 @@ class model():
         plt.show()
     
     def synthetic_waveform(self, elevations=None, flags=None, along=None, reflectance=None, illumination_weight=0.01,
-                           output="numpy"):
+                           output="numpy", returns="all"):
         """Forward Model for power waveform given a specific surface elevation
 
         Args:
@@ -315,9 +324,12 @@ class model():
         if output == "torch":
             envelope = torch.zeros(N)
             synth_rangepower = torch.zeros((np.unique(self.segment_id).shape[0], N))
-        else:
+        elif output == "numpy":
             envelope = np.zeros(N)
             synth_rangepower = np.zeros((np.unique(self.segment_id).shape[0], N))
+        elif output == "jax":
+            envelope = jnp.zeros(N)
+            synth_rangepower = jnp.zeros((np.unique(self.segment_id).shape[0], N))
             
         f_idx = 0
         for f in np.unique(self.segment_id):
@@ -326,14 +338,26 @@ class model():
             along_centered_z = self.along_centered[self.segment_id==f]
             
             for i in range(N-1):
-                count_z = np.logical_and(range_corrected_z < synth_ranges[i],
-                                        range_corrected_z > synth_ranges[i+1])
+                if output == "jax":
+                    count_z = jnp.logical_and(range_corrected_z < synth_ranges[i],
+                                              range_corrected_z > synth_ranges[i+1])
+                else:
+                    count_z = np.logical_and(range_corrected_z < synth_ranges[i],
+                                             range_corrected_z > synth_ranges[i+1])
+                    
                 if output == "torch":
                     along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
                                                                     range_corrected_z > synth_ranges[i+1]).bool()]
-                else:
+                elif output == "numpy":
                     along_dists_z = along_centered_z[np.logical_and(range_corrected_z < synth_ranges[i],
                                                                     range_corrected_z > synth_ranges[i+1])]
+                elif output == "jax":
+                    #along_dists_z = jnp.mean(along_centered_z[jnp.logical_and(range_corrected_z < synth_ranges[i],
+                    #                                                 range_corrected_z > synth_ranges[i+1])])
+                    aoi = jnp.logical_and(range_corrected_z < synth_ranges[i],
+                                          range_corrected_z > synth_ranges[i+1])
+                    along_dists_z = jnp.where(aoi, along_centered_z, 0)
+                        
                 # Scale with distance from center
                 if output == "torch":
                     scale_param = illumination_weight#0.03 # lower number means more weight to tails
@@ -349,26 +373,39 @@ class model():
                                                                 output="torch")#output)
                     else:
                         synth_rangepower[f_idx,i] = 0
-                else:
+                elif output == "numpy":
                     if np.any(along_dists_z):
-                        synth_rangepower[f_idx,i] = count_z.sum()* \
-                                                    self.reflectance[f_idx]* \
+                        synth_rangepower[f_idx,i] = np.sum(count_z)* \
+                                                    self.reflectance[f_idx].astype(float)* \
                                                     illumination(along_dists_z,
                                                                 scale_param, 
                                                                 mode="normal",
                                                                 output="numpy")#output)
                     else:
                         synth_rangepower[f_idx,i] = 0
+                elif output == "jax":
+                    synth_rangepower = synth_rangepower.at[f_idx,i].set(jnp.sum(count_z)* \
+                                                                        self.reflectance[f_idx].astype(float)* \
+                                                                        illumination(along_dists_z,
+                                                                                    scale_param, 
+                                                                                    mode="normal",
+                                                                                    output="jax"))#output)
                         
             # Add individual contribution to the full waveform
             envelope += synth_rangepower[f_idx,:]
             
             f_idx += 1
         # Normalize the individual contributions
-        f_idx = 0
-        for f in np.unique(self.segment_id):
-            synth_rangepower[f_idx,:] = synth_rangepower[f_idx,:]/envelope.max()
-            f_idx += 1
+        if output == "jax":
+            f_idx = 0
+            for f in np.unique(self.segment_id):
+                synth_rangepower = synth_rangepower.at[f_idx,:].set(synth_rangepower[f_idx,:]/jnp.max(envelope))
+                f_idx += 1
+        else:
+            f_idx = 0
+            for f in np.unique(self.segment_id):
+                synth_rangepower[f_idx,:] = synth_rangepower[f_idx,:]/envelope.max()
+                f_idx += 1
             
         # Smooth the envelope
         n_smooth = 5
@@ -377,18 +414,29 @@ class model():
             kernel = kernel[None,None,:]
             # Apply smoothing
             envelope = (torch.conv1d(envelope[None,None,:], kernel)/n_smooth)[0,0,:]
-        else:
+        elif output == "numpy":
+            envelope = np.convolve(np.ones(n_smooth), envelope, mode="same")/n_smooth
+        elif output == "jax":
             envelope = np.convolve(np.ones(n_smooth), envelope, mode="same")/n_smooth
             
         # Normalize the envelope
         envelope = envelope/envelope.max()
         
-        match output:
-            case "numpy":
-                return envelope, synth_rangepower, ranges
-            case "torch":
-                return envelope[:256], synth_rangepower[:256], ranges[256]
-        
+        match returns:
+            case "all":
+                match output:
+                    case "numpy":
+                        return envelope[:256], synth_rangepower[:256], ranges[:256]
+                    case "torch":
+                        return envelope[:256], synth_rangepower[:256], ranges[:256]
+            case "power":
+                return envelope[:256]
+            case "subpower":
+                return synth_rangepower[:256]
+            case "ranges":
+                return ranges[:256]
+            
+            
     def sampling_grid(self, theta, height=300, width=100):
         
         # Determine sampling grid
@@ -417,6 +465,295 @@ class model():
         """
         return self.footprint, self.centerline, self.theta, self.aspect
 
+    def bayesian_model(self, elevations, flags, segments, obs=None):
+        # Bias terms
+        N_flags = flags.unique().shape[0]
+        N_segments = segments.unique().shape[0]
+        
+        #### Setup priors
+        # Mean vals
+        land_mean = 0.0
+        water_mean = 0.0
+        means = torch.tensor([land_mean, water_mean]).float()
+        # SD vals
+        land_sd = 0.5
+        water_sd = 1.5
+        sds = torch.tensor([land_sd, water_sd]).float()
+        # Reflection vals
+        land_ref = [2,0.1]#[0.5, 1.5]#[1, 2]
+        water_ref = [2,0.3]#[1.0, 2.0]#[2, 6]
+        refs = torch.tensor([land_ref, water_ref]).float()
+            
+        # Set values according to majority surface type in segment
+        bias_prior = torch.zeros((N_segments, 2))
+        ref_prior = torch.zeros((N_segments, 2))
+        for s in segments.unique():
+            # Get majority surface type
+            surface_type = torch.round(torch.mean( flags[segments==s])).int()
+            bias_prior[s,:] = torch.tensor([means[surface_type], sds[surface_type]]).float()
+            ref_prior[s,:] = torch.tensor([refs[surface_type,0], refs[surface_type,1]]).float()
+            
+        with pyro.plate("segPlate", N_segments):
+            # Bias terms
+            bias = pyro.sample("bias", pyro.distributions.Normal(bias_prior[:,0], bias_prior[:,1]))
+            
+            # Reflectance Terms
+            #ref = pyro.sample("ref", pyro.distributions.Uniform(ref_prior[:,0], ref_prior[:,1]))
+            ref = pyro.sample("ref", pyro.distributions.Gamma(ref_prior[:,0], ref_prior[:,1]))
+        
+        # Illumination weight
+        #illu = pyro.sample("illu", pyro.distributions.Uniform(0.0001, 0.2))
+            
+        # Create elevation specific changes
+        elev_ = torch.zeros(elevations.shape[0])
+        idx = 0
+        for f in np.unique(segments):
+            elev_[segments==int(f)] += elevations[segments==int(f)] + bias[idx]
+            idx += 1
+        #elev = pyro.deterministic("elev", elev_) 
+        """
+        syn_power, syn_subpower, syn_ranges = self.synthetic_waveform(elevations=elev,
+                                                                    reflectance=ref,
+                                                                    illumination_weight=0.01,
+                                                                    output="torch")
+        """
+        
+        syn_power = pyro.sample("syn_power", pyro.distributions.Normal(self.synthetic_waveform(elevations=elev,
+                                                                        reflectance=ref,
+                                                                        illumination_weight=0.01,
+                                                                        output="torch",
+                                                                        returns="power"),
+                                                                        0.1))
+        
+        # Get deterministics   
+        #syn_subpower = pyro.deterministic("syn_subpower", self.synthetic_waveform(elevations=elev,
+        #                                                            reflectance=ref,
+        #                                                            illumination_weight=0.01,
+        #                                                            output="torch",
+        #                                                            returns="subpower"))        
+        
+        with pyro.plate("observations", syn_power.shape[0]) as x:
+            power = pyro.sample("power", pyro.distributions.Normal(syn_power[x], 0.1), obs=obs[x])
+        
+        #out = {"syn_subpower": syn_subpower,
+        #       "syn_elev": elev,
+        #       "syn_ranges": syn_ranges}
+        return elev#syn_subpower
+    
+    def bayesian_model_numpyro(self, elevations, flags, segments, obs=None):
+        # Bias terms
+        N_flags = np.unique(flags).shape[0]
+        N_segments = np.unique(segments).shape[0]
+        
+        #### Setup priors
+        # Mean vals
+        land_mean = 0.0
+        water_mean = 0.0
+        means = jnp.array([land_mean, water_mean]).astype(float)
+        # SD vals
+        land_sd = 0.5
+        water_sd = 1.5
+        sds = jnp.array([land_sd, water_sd]).astype(float)
+        # Reflection vals
+        land_ref = [2,0.1]#[0.5, 1.5]#[1, 2]
+        water_ref = [2,0.3]#[1.0, 2.0]#[2, 6]
+        refs = jnp.array([land_ref, water_ref]).astype(float)
+            
+        # Set values according to majority surface type in segment
+        bias_prior = jnp.zeros((N_segments, 2))
+        ref_prior = jnp.zeros((N_segments, 2))
+        for s in range(N_segments):
+            # Get majority surface type
+            surface_type = jnp.round(jnp.mean( flags[segments==s])).astype(int)
+            bias_prior = bias_prior.at[s,:].set(jnp.array([means[surface_type], sds[surface_type]]).astype(float))
+            ref_prior = ref_prior.at[s,:].set(jnp.array([refs[surface_type,0], refs[surface_type,1]]).astype(float))
+            
+        with numpyro.plate("segPlate", N_segments):
+            # Bias terms
+            bias = numpyro.sample("bias", numpyro.distributions.Normal(bias_prior[:,0], bias_prior[:,1]))
+            
+            # Reflectance Terms
+            #ref = pyro.sample("ref", pyro.distributions.Uniform(ref_prior[:,0], ref_prior[:,1]))
+            ref = numpyro.sample("ref", numpyro.distributions.Gamma(ref_prior[:,0], ref_prior[:,1]))
+        
+        # Illumination weight
+        #illu = pyro.sample("illu", pyro.distributions.Uniform(0.0001, 0.2))
+            
+        # Create elevation specific changes
+        elev_ = jnp.zeros(elevations.shape[0])
+        idx = 0
+        for f in range(N_segments):
+            elev_ = elev_.at[segments==int(f)].set(elevations[segments==int(f)] + bias[idx])
+            idx += 1
+        elev = numpyro.deterministic("elev", elev_) 
+        """
+        syn_power, syn_subpower, syn_ranges = self.synthetic_waveform(elevations=elev,
+                                                                    reflectance=ref,
+                                                                    illumination_weight=0.01,
+                                                                    output="torch")
+        """
+        
+        syn_power = numpyro.sample("syn_power", numpyro.distributions.Normal(self.synthetic_waveform(elevations=elev,
+                                                                        reflectance=ref,
+                                                                        illumination_weight=0.01,
+                                                                        output="jax",
+                                                                        returns="power"),
+                                                                        0.1))
+        #with numpyro.plate("powerPlate", 256):
+        #    syn_power = numpyro.sample("syn_power", numpyro.distributions.Normal(0, 2.0))
+        # Get deterministics   
+        #syn_subpower = pyro.deterministic("syn_subpower", self.synthetic_waveform(elevations=elev,
+        #                                                            reflectance=ref,
+        #                                                            illumination_weight=0.01,
+        #                                                            output="torch",
+        #                                                            returns="subpower"))        
+        
+        with numpyro.plate("observations", syn_power.shape[0]):
+            power = numpyro.sample("power", numpyro.distributions.Normal(syn_power, 0.1), obs=obs)
+        
+        #out = {"syn_subpower": syn_subpower,
+        #       "syn_elev": elev,
+        #       "syn_ranges": syn_ranges}
+        return elev#syn_subpower
+    
+    def run_inference(self,
+                      n_samples=100,
+                      n_warmup=50,
+                      n_chains=1,
+                      disable_progbar=True,
+                      save_samples=False,
+                      save_predictions=True,
+                      savefile_dir = "",
+                      engine="pyro"):
+        
+        print("=========================================")
+        print("Prepare data to pyro model")
+        # Prepare data for pyro model
+        
+        # Get waveform at location and shorten to first half
+        # to allow quicker computation
+        LOCATION = self.location
+        heights = self.altimetry.data["heights"][:256][:]
+        waveform = self.altimetry.data["power_waveform"][LOCATION]
+        waveform = waveform[:256]
+        
+        match engine:
+            case "pyro":
+                print("Run Pyro model")
+                
+                # Convert to torch tensors
+                power_train = torch.tensor(waveform/waveform.max()).float()
+                elevations_train = torch.tensor(self.elevations).float()
+                along_train = torch.tensor(self.along_centered).float()
+                flags_train = torch.tensor(self.surface_flags)
+                segments_train = torch.tensor(self.segment_id)
+                
+                N_SAMPLES = n_samples
+                N_WARMUP = n_warmup
+                N_CHAINS = n_chains
+                DISABLE_PROGBAR = disable_progbar
+                print("N Samples: {}, N Warmup: {}, N Chains: {}".format(N_SAMPLES,
+                                                                        N_WARMUP,
+                                                                        N_CHAINS))
+                nuts_kernel = NUTS(self.bayesian_model, jit_compile=True, ignore_jit_warnings=True)
+                mcmc = MCMC(nuts_kernel, num_samples=N_SAMPLES, warmup_steps=N_WARMUP, 
+                            num_chains=N_CHAINS, disable_progbar=DISABLE_PROGBAR)
+                mcmc.run(elevations=elevations_train,
+                        flags=flags_train,
+                        segments=segments_train,
+                        obs=power_train)
+                
+                print(mcmc.summary())
+                
+            case "numpyro":
+                print("Run NumPyro model")
+                
+                # Get data for training
+                power_train = waveform/waveform.max().astype(float)
+                elevations_train = self.elevations.astype(float)
+                along_train = self.along_centered.astype(float)
+                flags_train = self.surface_flags
+                segments_train = self.segment_id
+                
+                # Setup numpyro random key
+                rng_key = random.PRNGKey(0)
+                rng_key, rng_key_ = random.split(rng_key)
+                
+                N_SAMPLES = n_samples
+                N_WARMUP = n_warmup
+                N_CHAINS = n_chains
+                DISABLE_PROGBAR = disable_progbar
+                print("N Samples: {}, N Warmup: {}, N Chains: {}".format(N_SAMPLES,
+                                                                         N_WARMUP,
+                                                                         N_CHAINS))
+                nuts_kernel = numpyro.infer.NUTS(self.bayesian_model_numpyro)
+                mcmc = numpyro.infer.MCMC(nuts_kernel,
+                                          num_samples=N_SAMPLES,
+                                          num_warmup=N_WARMUP, 
+                                          num_chains=N_CHAINS)
+                mcmc.run(rng_key_,
+                         elevations=elevations_train,
+                         flags=flags_train,
+                         segments=segments_train,
+                         obs=power_train)
+
+                print(mcmc.print_summary())
+
+        # Save samples
+        if save_samples == True:
+            timestr = datetime.utcnow().strftime('%Y%m%d_%H%M%S%f')
+            saved_filename = "{}/mcmc_samples_{}_{}.pt".format(savefile_dir,
+                                                                timestr,
+                                                                LOCATION)
+            torch.save(mcmc.get_samples(), saved_filename)
+            print("Saved samples as {}".format(saved_filename))
+
+        # Get predictive statement
+        print("Get predictions")
+        match engine:
+            case "pyro":
+                predictive = Predictive(self.bayesian_model, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
+                                        return_sites=("power", "_RETURN"))
+                predictive_samples = predictive(elevations=elevations_train,
+                                                flags=flags_train,
+                                                segments=segments_train,
+                                                obs=power_train)
+                samples = mcmc.get_samples()
+                predictions = {"waveform": predictive_samples["power"].detach().numpy().tolist(),
+                            "waveform_syn": samples["syn_power"].detach().numpy().tolist(),
+                            "elevations": samples["_RETURN"].detach().numpy().tolist(),
+                            "along": along_train.detach().numpy().tolist()
+                }       
+            case "numpyro":
+                predictive = numpyro.infer.Predictive(self.bayesian_model_numpyro, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
+                                                        return_sites=("elev","power", "_RETURN"))
+                predictive_samples = predictive(rng_key_,
+                                                elevations=elevations_train,
+                                                flags=flags_train,
+                                                segments=segments_train,
+                                                obs=power_train)
+                samples = mcmc.get_samples()
+                predictions = {"waveform": predictive_samples["power"].tolist(),
+                            "waveform_syn": samples["syn_power"].tolist(),
+                            "elevations": samples["elev"].tolist(),
+                            "along": along_train.tolist()
+                }       
+        
+        # Save predictive statements
+        if save_predictions == True:
+            current_filename = self.altimetry.filename
+            timestr = datetime.utcnow().strftime('%Y%m%d_%H%M%S%f')
+            saved_filename = "{}/mcmc_{}_{}_{}.txt".format(savefile_dir,
+                                                          current_filename,
+                                                          timestr,
+                                                          LOCATION)
+            #torch.save(predictions, saved_filename)
+            with open(saved_filename, "w") as fp:
+                json.dump(predictions, fp)
+            print("Saved predictive samples as {}".format(saved_filename))
+        
+        
+        
 # ==============================================================================
 # FUNCTIONS
 
@@ -498,6 +835,8 @@ def illumination(x, scale_param, mode = "normal", output="numpy"):
             return torch.exp(-scale_param*(torch.mean(x)/(1e3))**2)**2
         elif output == "numpy":
             return np.exp(-scale_param*(np.mean(x)/(1e3))**2)**2
+        elif output == "jax":
+            return jnp.exp(-scale_param*(jnp.mean(x)/(1e3))**2)**2
     elif mode == "sinh":
         return np.exp(-scale_param*(np.sinh( 0.9 * ( np.arcsinh(np.mean(x)/1e3)) + 0))**2)
     
