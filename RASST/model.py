@@ -25,7 +25,21 @@ class model():
         self.mask = mask
         self.dem = dem
         self.location = location
-        
+    def closestNumber(self, n, m) :
+        # Find the quotient
+        q = int(n / m)
+        # 1st possible closest number
+        n1 = m * q
+        # 2nd possible closest number
+        if((n * m) > 0) :
+            n2 = (m * (q + 1))
+        else :
+            n2 = (m * (q - 1))
+        # if true, then n1 is the required closest number
+        if (abs(n - n1) < abs(n - n2)) :
+            return n1
+        # else n2 is the required closest number
+        return n2
     def sample_elevations(self, sampling="ang_rect", N_samplepoints=4000, n_segments=10):
         """_summary_
 
@@ -56,6 +70,9 @@ class model():
 
         # Create line over dem
         #N_samplepoints = 4000
+        # Determine N samplepoints
+        N_samplepoints = self.closestNumber(N_samplepoints,n_segments)
+        print("Note, N samplepoints changed to {}".format(N_samplepoints))
         X = np.linspace(line_index[0,1], line_index[1,1], N_samplepoints).astype(int)
         Y = np.linspace(line_index[0,0], line_index[1,0], N_samplepoints).astype(int)
         x = np.linspace(line_loc[0][1], line_loc[0][0], N_samplepoints)
@@ -720,6 +737,8 @@ class model():
         
         bias = numpyro.sample("elev", numpyro.distributions.Normal(jnp.zeros(N_segments),
                                                                    5*jnp.ones(N_segments)))
+        noise = numpyro.sample("noise", numpyro.distributions.Gamma(2*jnp.ones(N_segments),
+                                                                   0.3*jnp.ones(N_segments)))
         prior_vals_ref = 5*jnp.ones(N_segments)#jnp.array([[40 if flags[i] == 0 else 30] for i in range(flags.shape[0])]).ravel()
         ref_posterior = numpyro.param("ref_posterior", prior_vals_ref, 
                                       constraint=numpyro.distributions.constraints.positive)
@@ -738,9 +757,10 @@ class model():
             arg_val = abs(synth_ranges - elev_)
             arg = jnp.argmin(arg_val, axis=0)
             
-            subwaveform = subwaveform.at[arg].add(3*ref[s]*waveform_corr[s,:])
-            subwaveform = subwaveform.at[arg-1].add(1*ref[s]*waveform_corr[s,:])
-            subwaveform = subwaveform.at[arg+1].add(1*ref[s]*waveform_corr[s,:])
+            
+            for i in range(-5,6):
+                weight = jnp.exp(-0.01*(i/(0.5*noise[s]))**2)**2*5
+                subwaveform = subwaveform.at[arg+i].add(weight*ref[s]*waveform_corr[s,:])
             
             subwaveform = subwaveform.at[jnp.arange(-5,5)].set(0)
         
@@ -753,7 +773,7 @@ class model():
         syn_power = numpyro.deterministic("syn_power", envelope)
         # ==================================================================================================        
         with numpyro.plate("observations", syn_power.shape[0]):
-            power = numpyro.sample("power", numpyro.distributions.Normal(syn_power, 0.01), obs=obs)
+            power = numpyro.sample("power", numpyro.distributions.Normal(syn_power, 0.1), obs=obs)
         return 1
     
     def run_inference(self,
