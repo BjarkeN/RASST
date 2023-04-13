@@ -145,6 +145,7 @@ class model():
         
         # Pass segment id's
         segment_id = np.linspace(0, self.n_sampling_ids, N_samplepoints).astype(int)
+        segment_id[segment_id==self.n_sampling_ids] = self.n_sampling_ids-1 # Correct the last point
         
         # Save internally
         self.elevations = elevations
@@ -617,11 +618,16 @@ class model():
         #       "syn_elev": elev,
         #       "syn_ranges": syn_ranges}
         return elev#syn_subpower
-
+    def f(self, carry, noise_t):
+        beta, z_prev, tau = carry
+        z_t = beta*z_prev + tau*noise_t
+        z_prev = z_t
+        return (beta, z_prev, tau), z_t
     def bayesian_model_numpyro_test(self, elevations, flags, segments, obs=None):
         # Bias terms
         #N_flags = np.unique(flags).shape[0]
         #N_segments = np.unique(segments).shape[0]
+        N_elev = elevations.shape[0]
         
         # ==================================================================================================
             
@@ -631,20 +637,35 @@ class model():
         wavefront_height = wavefront(sat_altitude, self.along_centered)
         
         # Smooth the surface
-        with numpyro.plate("elevPlate", elevations.shape[0]):
-            #elev = numpyro.sample("elev", numpyro.distributions.Normal(elevations, jnp.ones(elevations.shape[0])*0.25))
-            elev = numpyro.sample("elev", numpyro.distributions.Uniform(elevations-1,
-                                                                        elevations+1))
+        prior_vals_elev = jnp.array([[0.2 if flags[i] == 0 else 3] for i in range(flags.shape[0])]).ravel()
+        lower_prior = elevations - prior_vals_elev
+        upper_prior = elevations + prior_vals_elev
+        #with numpyro.plate("elevPlate", elevations.shape[0]):
+        #elev = numpyro.sample("elev", numpyro.distributions.Normal(elevations, jnp.ones(elevations.shape[0])*0.25))
+        elev = numpyro.sample("elev", numpyro.distributions.Uniform(lower_prior, upper_prior))
+        coincidents = np.eye(N_elev, k=1)+np.eye(N_elev,k=-1)
+        #elev = numpyro.sample("elev", numpyro.distributions.CAR(elevations, 0.75, 5, coincidents))
+        #    elev = numpyro.sample("elev", numpyro.distributions.GaussianRandomWalk(scale=0.1, num_steps=N_elev)) + elevations
+        # Limit the elevations
+        lim = 3
+        elev = jnp.where((elev-elevations)>lim, elevations+lim, elev)
+        elev = jnp.where((elev-elevations)<-lim, elevations-lim, elev)
         # Smooth the surface    
-        n_smooth = 3
-        elev = jnp.convolve(jnp.ones(n_smooth), elev, mode="same")/n_smooth
+        #n_smooth = 3
+        #elev = jnp.convolve(jnp.ones(n_smooth), elev, mode="same")/n_smooth
         
-        ref_posterior = numpyro.param("ref_posterior", jnp.ones(elev.shape[0])*( (1/(flags+1)+1)*10), 
+        prior_vals_ref = jnp.array([[40 if flags[i] == 0 else 30] for i in range(flags.shape[0])]).ravel()
+        ref_posterior = numpyro.param("ref_posterior", prior_vals_ref, 
                                       constraint=numpyro.distributions.constraints.positive)
+        #ref = numpyro.sample("ref", numpyro.distributions.Dirichlet(ref_posterior))
         #with numpyro.plate("refPlate", elev.shape[0]):
-            #ref = numpyro.sample("ref", numpyro.distributions.Gamma(2,0.2))
-        ref = numpyro.sample("ref", numpyro.distributions.Dirichlet(ref_posterior))
+        prior_vals_ref_low = jnp.array([[0.1 if flags[i] == 0 else 0.1] for i in range(flags.shape[0])]).ravel()
+        prior_vals_ref_high = jnp.array([[2 if flags[i] == 0 else 4.0] for i in range(flags.shape[0])]).ravel()
+        ref = numpyro.sample("ref", numpyro.distributions.Uniform(prior_vals_ref_low,prior_vals_ref_high))
 
+        n_smooth = 5
+        ref = jnp.convolve(jnp.ones(n_smooth), ref, mode="same")/n_smooth
+        
         # Corrected elevations
         elev_corrected = elev - wavefront_height
         
@@ -657,16 +678,16 @@ class model():
         envelope = jnp.zeros(N)
         #synth_rangepower = jnp.zeros((np.unique(self.segment_id).shape[0], N))
         
+        waveform_corr = jnp.exp(-0.01*(jnp.array(self.along_centered)/(1e3))**2)**2
         with numpyro.plate("elevPlate", elev.shape[0]) as i:
-            envelope = envelope.at[jnp.argmin(abs(synth_ranges - jnp.array([elev_corrected[i]]).T), axis=1)].add(3* \
-                                                                                                                ref[i]*\
-                                                                    jnp.exp(-0.01*(jnp.array(self.along_centered)[i]/(1e3))**2)**2)
-            envelope = envelope.at[jnp.argmin(abs(synth_ranges - jnp.array([elev_corrected[i]]).T), axis=1)-1].add(1* \
-                                                                                                                ref[i]*\
-                                                                    jnp.exp(-0.01*(jnp.array(self.along_centered)[i]/(1e3))**2)**2)
-            envelope = envelope.at[jnp.argmin(abs(synth_ranges - jnp.array([elev_corrected[i]]).T), axis=1)+1].add(1* \
-                                                                                                                ref[i]*\
-                                                                    jnp.exp(-0.01*(jnp.array(self.along_centered)[i]/(1e3))**2)**2)
+            arg = jnp.argmin(abs(synth_ranges - jnp.array([elev_corrected[i]]).T), axis=1)
+            
+            envelope = envelope.at[arg].add(3*ref[i]*waveform_corr[i])
+            envelope = envelope.at[arg-1].add(1*ref[i]*waveform_corr[i])
+            envelope = envelope.at[arg+1].add(1*ref[i]*waveform_corr[i])
+            
+        #envelope = envelope.at[0:5].set(0)
+        #envelope = envelope.at[-5:-1].set(0)
                                         
         # Normalize the envelope
         n_smooth = 3
@@ -677,7 +698,63 @@ class model():
         with numpyro.plate("observations", syn_power.shape[0]):
             power = numpyro.sample("power", numpyro.distributions.Normal(syn_power, 0.01), obs=obs)
         
-        return elev#syn_subpower
+        return elev #syn_subpower
+    
+    def bayesian_model_numpyro_test_2(self, elevations, flags, segments, obs=None):
+        
+        N_segments = np.unique(segments).shape[0]
+        elevations = jnp.reshape(elevations, (N_segments, -1))
+        
+        # Determine wavefront shape
+        sat_altitude = self.altimetry.data["altitude"][self.location]
+        wavefront_height = jnp.asarray(wavefront(sat_altitude, self.along_centered))
+        wavefront_height = jnp.reshape(wavefront_height, (N_segments, -1))
+        waveform_corr = jnp.exp(-0.01*(jnp.array(self.along_centered)/(1e3))**2)**2
+        waveform_corr = jnp.reshape(waveform_corr, (N_segments, -1))
+        # Determine range
+        ranges = jnp.asarray(self.altimetry.data["heights"][self.location])
+        N_range = 256
+        synth_ranges = jnp.array([ranges[:N_range]]).T
+        # Setup envelope
+        envelope = jnp.zeros(N_range)
+        
+        bias = numpyro.sample("elev", numpyro.distributions.Normal(jnp.zeros(N_segments),
+                                                                   5*jnp.ones(N_segments)))
+        prior_vals_ref = 5*jnp.ones(N_segments)#jnp.array([[40 if flags[i] == 0 else 30] for i in range(flags.shape[0])]).ravel()
+        ref_posterior = numpyro.param("ref_posterior", prior_vals_ref, 
+                                      constraint=numpyro.distributions.constraints.positive)
+        ref = numpyro.sample("ref", numpyro.distributions.Dirichlet(ref_posterior))
+        
+        #with numpyro.plate("segmentPlate", N_segments) as s:
+        for s in range(N_segments):
+            #elev = elevations[s,:]
+            #elev_corr = elev - wavefront_height[s,:]
+            
+            subwaveform = jnp.zeros(N_range)
+            elev_ = elevations[s,:] - wavefront_height[s,:] + bias[s]
+            
+            #with numpyro.plate("subwaveformPlate", 10) as i:
+            #for i in range(elevations.shape[1]):
+            arg_val = abs(synth_ranges - elev_)
+            arg = jnp.argmin(arg_val, axis=0)
+            
+            subwaveform = subwaveform.at[arg].add(3*ref[s]*waveform_corr[s,:])
+            subwaveform = subwaveform.at[arg-1].add(1*ref[s]*waveform_corr[s,:])
+            subwaveform = subwaveform.at[arg+1].add(1*ref[s]*waveform_corr[s,:])
+            
+            subwaveform = subwaveform.at[jnp.arange(-5,5)].set(0)
+        
+            envelope += subwaveform
+        
+        # Normalize the waveform
+        n_smooth = 3
+        envelope = jnp.convolve(jnp.ones(n_smooth), envelope, mode="same")/n_smooth
+        envelope = envelope/jnp.max(envelope)
+        syn_power = numpyro.deterministic("syn_power", envelope)
+        # ==================================================================================================        
+        with numpyro.plate("observations", syn_power.shape[0]):
+            power = numpyro.sample("power", numpyro.distributions.Normal(syn_power, 0.01), obs=obs)
+        return 1
     
     def run_inference(self,
                       n_samples=100,
@@ -749,7 +826,7 @@ class model():
                 print("N Samples: {}, N Warmup: {}, N Chains: {}".format(N_SAMPLES,
                                                                          N_WARMUP,
                                                                          N_CHAINS))
-                nuts_kernel = numpyro.infer.NUTS(self.bayesian_model_numpyro_test)
+                nuts_kernel = numpyro.infer.NUTS(self.bayesian_model_numpyro_test_2)
                 mcmc = numpyro.infer.MCMC(nuts_kernel,
                                           num_samples=N_SAMPLES,
                                           num_warmup=N_WARMUP, 
@@ -788,7 +865,7 @@ class model():
                             "along": along_train.detach().numpy().tolist()
                 }       
             case "numpyro":
-                predictive = numpyro.infer.Predictive(self.bayesian_model_numpyro_test, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
+                predictive = numpyro.infer.Predictive(self.bayesian_model_numpyro_test_2, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
                                                         return_sites=("elev","syn_power","power", "_RETURN"))
                 predictive_samples = predictive(rng_key_,
                                                 elevations=elevations_train,
@@ -800,6 +877,7 @@ class model():
                             "waveform_syn": predictive_samples["syn_power"].tolist(),
                             "elevations": predictive_samples["elev"].tolist(),
                             "along": along_train.tolist(),
+                            "segment": segments_train.tolist(),
                             "prior_elevations": self.prior_elevations.tolist()
                 }       
         
