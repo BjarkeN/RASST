@@ -721,6 +721,8 @@ class model():
         
         N_segments = np.unique(segments).shape[0]
         elevations = jnp.reshape(elevations, (N_segments, -1))
+        flags = jnp.reshape(flags, (N_segments, -1))
+        flags = jnp.round(jnp.mean(flags, axis=1))
         
         # Determine wavefront shape
         sat_altitude = self.altimetry.data["altitude"][self.location]
@@ -735,8 +737,9 @@ class model():
         # Setup envelope
         envelope = jnp.zeros(N_range)
         
+        bias_prior = flags*4+1
         bias = numpyro.sample("elev", numpyro.distributions.Normal(jnp.zeros(N_segments),
-                                                                   5*jnp.ones(N_segments)))
+                                                                   bias_prior))
         noise = numpyro.sample("noise", numpyro.distributions.Gamma(2*jnp.ones(N_segments),
                                                                    0.3*jnp.ones(N_segments)))
         prior_vals_ref = 5*jnp.ones(N_segments)#jnp.array([[40 if flags[i] == 0 else 30] for i in range(flags.shape[0])]).ravel()
