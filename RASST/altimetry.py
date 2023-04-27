@@ -186,6 +186,23 @@ class altimetry():
 
         # Downsample
         heights = heights.T
+        # Determine if we need one more element to match
+        if heights.shape[1] > 169:
+            n_drop = heights.shape[1] - 169
+            print("WARNING: heights does not match with dimensions {}, last {} columns dropped".format(heights.shape,n_drop))
+            heights = heights[:,:-n_drop]
+        
+        if geocorr.shape[0] > 169:
+            n_drop = geocorr.shape[0] - 169
+            print("WARNING: geocorr does not match with dimensions {}, last {} columns dropped".format(geocorr.shape,n_drop))
+            geocorr = geocorr[:-n_drop]
+        
+        if self.geo["geoid"].shape[0] > 169:
+            n_drop = self.geo["geoid"].shape[0] - 169
+            print("WARNING: geoid does not match with dimensions {}, last {} columns dropped".format(self.geo["geoid"].shape,n_drop))
+            self.geo["geoid"] = self.geo["geoid"][:-n_drop]
+        
+        # Correct
         heights = heights - geocorr - self.geo["geoid"]# - geo["mean_dynamic_topography"]
         heights = heights.T
         self.geocorr = geocorr

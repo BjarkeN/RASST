@@ -737,7 +737,9 @@ class model():
         # Setup envelope
         envelope = jnp.zeros(N_range)
         
-        bias_prior = flags*4+1
+        offset = numpyro.sample("offset", numpyro.distributions.Normal(0, 50))
+        
+        bias_prior = flags+0.5
         bias = numpyro.sample("elev", numpyro.distributions.Normal(jnp.zeros(N_segments),
                                                                    bias_prior))
         noise = numpyro.sample("noise", numpyro.distributions.Gamma(2*jnp.ones(N_segments),
@@ -753,7 +755,7 @@ class model():
             #elev_corr = elev - wavefront_height[s,:]
             
             subwaveform = jnp.zeros(N_range)
-            elev_ = elevations[s,:] - wavefront_height[s,:] + bias[s]
+            elev_ = elevations[s,:] - wavefront_height[s,:] + bias[s] + offset
             
             #with numpyro.plate("subwaveformPlate", 10) as i:
             #for i in range(elevations.shape[1]):
@@ -889,7 +891,7 @@ class model():
                 }       
             case "numpyro":
                 predictive = numpyro.infer.Predictive(self.bayesian_model_numpyro_test_2, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
-                                                        return_sites=("elev","syn_power","power", "_RETURN"))
+                                                        return_sites=("elev","syn_power","power", "offset", "_RETURN"))
                 predictive_samples = predictive(rng_key_,
                                                 elevations=elevations_train,
                                                 flags=flags_train,
@@ -899,8 +901,10 @@ class model():
                 predictions = {"waveform": predictive_samples["power"].tolist(),
                             "waveform_syn": predictive_samples["syn_power"].tolist(),
                             "elevations": predictive_samples["elev"].tolist(),
+                            "offset": predictive_samples["offset"].tolist(),
                             "along": along_train.tolist(),
                             "segment": segments_train.tolist(),
+                            "flag": flags_train.tolist(),
                             "prior_elevations": self.prior_elevations.tolist()
                 }       
         
