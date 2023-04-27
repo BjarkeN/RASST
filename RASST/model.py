@@ -484,240 +484,8 @@ class model():
                  np.max(self.footprint[1,:]) < np.max(self.dem.extent_geo[1,:]) ), "Footprint exceeded DEM size"
         """
         return self.footprint, self.centerline, self.theta, self.aspect
-
+    
     def bayesian_model(self, elevations, flags, segments, obs=None):
-        # Bias terms
-        N_flags = flags.unique().shape[0]
-        N_segments = segments.unique().shape[0]
-        
-        #### Setup priors
-        # Mean vals
-        land_mean = 0.0
-        water_mean = 0.0
-        means = torch.tensor([land_mean, water_mean]).float()
-        # SD vals
-        land_sd = 0.5
-        water_sd = 1.5
-        sds = torch.tensor([land_sd, water_sd]).float()
-        # Reflection vals
-        land_ref = [2,0.1]#[0.5, 1.5]#[1, 2]
-        water_ref = [2,0.3]#[1.0, 2.0]#[2, 6]
-        refs = torch.tensor([land_ref, water_ref]).float()
-            
-        # Set values according to majority surface type in segment
-        bias_prior = torch.zeros((N_segments, 2))
-        ref_prior = torch.zeros((N_segments, 2))
-        for s in segments.unique():
-            # Get majority surface type
-            surface_type = torch.round(torch.mean( flags[segments==s])).int()
-            bias_prior[s,:] = torch.tensor([means[surface_type], sds[surface_type]]).float()
-            ref_prior[s,:] = torch.tensor([refs[surface_type,0], refs[surface_type,1]]).float()
-            
-        with pyro.plate("segPlate", N_segments):
-            # Bias terms
-            bias = pyro.sample("bias", pyro.distributions.Normal(bias_prior[:,0], bias_prior[:,1]))
-            
-            # Reflectance Terms
-            #ref = pyro.sample("ref", pyro.distributions.Uniform(ref_prior[:,0], ref_prior[:,1]))
-            ref = pyro.sample("ref", pyro.distributions.Gamma(ref_prior[:,0], ref_prior[:,1]))
-        
-        # Illumination weight
-        #illu = pyro.sample("illu", pyro.distributions.Uniform(0.0001, 0.2))
-            
-        # Create elevation specific changes
-        elev_ = torch.zeros(elevations.shape[0])
-        idx = 0
-        for f in np.unique(segments):
-            elev_[segments==int(f)] += elevations[segments==int(f)] + bias[idx]
-            idx += 1
-        #elev = pyro.deterministic("elev", elev_) 
-        """
-        syn_power, syn_subpower, syn_ranges = self.synthetic_waveform(elevations=elev,
-                                                                    reflectance=ref,
-                                                                    illumination_weight=0.01,
-                                                                    output="torch")
-        """
-        
-        syn_power = pyro.sample("syn_power", pyro.distributions.Normal(self.synthetic_waveform(elevations=elev,
-                                                                        reflectance=ref,
-                                                                        illumination_weight=0.01,
-                                                                        output="torch",
-                                                                        returns="power"),
-                                                                        0.1))
-        
-        # Get deterministics   
-        #syn_subpower = pyro.deterministic("syn_subpower", self.synthetic_waveform(elevations=elev,
-        #                                                            reflectance=ref,
-        #                                                            illumination_weight=0.01,
-        #                                                            output="torch",
-        #                                                            returns="subpower"))        
-        
-        with pyro.plate("observations", syn_power.shape[0]) as x:
-            power = pyro.sample("power", pyro.distributions.Normal(syn_power[x], 0.1), obs=obs[x])
-        
-        #out = {"syn_subpower": syn_subpower,
-        #       "syn_elev": elev,
-        #       "syn_ranges": syn_ranges}
-        return elev#syn_subpower
-    
-    def bayesian_model_numpyro(self, elevations, flags, segments, obs=None):
-        # Bias terms
-        N_flags = np.unique(flags).shape[0]
-        N_segments = np.unique(segments).shape[0]
-        
-        #### Setup priors
-        # Mean vals
-        land_mean = 0.0
-        water_mean = 0.0
-        means = jnp.array([land_mean, water_mean]).astype(float)
-        # SD vals
-        land_sd = 0.5
-        water_sd = 1.5
-        sds = jnp.array([land_sd, water_sd]).astype(float)
-        # Reflection vals
-        land_ref = [2,0.1]#[0.5, 1.5]#[1, 2]
-        water_ref = [2,0.3]#[1.0, 2.0]#[2, 6]
-        refs = jnp.array([land_ref, water_ref]).astype(float)
-            
-        # Set values according to majority surface type in segment
-        bias_prior = jnp.zeros((N_segments, 2))
-        ref_prior = jnp.zeros((N_segments, 2))
-        for s in range(N_segments):
-            # Get majority surface type
-            surface_type = jnp.round(jnp.mean( flags[segments==s])).astype(int)
-            bias_prior = bias_prior.at[s,:].set(jnp.array([means[surface_type], sds[surface_type]]).astype(float))
-            ref_prior = ref_prior.at[s,:].set(jnp.array([refs[surface_type,0], refs[surface_type,1]]).astype(float))
-            
-        with numpyro.plate("segPlate", N_segments):
-            # Bias terms
-            bias = numpyro.sample("bias", numpyro.distributions.Normal(bias_prior[:,0], bias_prior[:,1]))
-            
-            # Reflectance Terms
-            #ref = pyro.sample("ref", pyro.distributions.Uniform(ref_prior[:,0], ref_prior[:,1]))
-            ref = numpyro.sample("ref", numpyro.distributions.Gamma(ref_prior[:,0], ref_prior[:,1]))
-        
-        # Illumination weight
-        #illu = pyro.sample("illu", pyro.distributions.Uniform(0.0001, 0.2))
-            
-        # Create elevation specific changes
-        elev_ = jnp.zeros(elevations.shape[0])
-        idx = 0
-        for f in range(N_segments):
-            elev_ = elev_.at[segments==int(f)].set(elevations[segments==int(f)] + bias[idx])
-            idx += 1
-        elev = numpyro.deterministic("elev", elev_) 
-        
-        syn_power, syn_subpower, syn_ranges = self.synthetic_waveform(elevations=elev,
-                                                                    reflectance=ref,
-                                                                    illumination_weight=0.01,
-                                                                    output="torch")
-        
-        """
-        syn_power = numpyro.sample("syn_power", numpyro.distributions.Normal(self.synthetic_waveform(elevations=elev,
-                                                                        reflectance=ref,
-                                                                        illumination_weight=0.01,
-                                                                        output="jax",
-                                                                        returns="power"),
-                                                                        0.1))
-        #with numpyro.plate("powerPlate", 256):
-        #    syn_power = numpyro.sample("syn_power", numpyro.distributions.Normal(0, 2.0))
-        # Get deterministics   
-        #syn_subpower = pyro.deterministic("syn_subpower", self.synthetic_waveform(elevations=elev,
-        #                                                            reflectance=ref,
-        #                                                            illumination_weight=0.01,
-        #                                                            output="torch",
-        #                                                            returns="subpower"))        
-        """     
-        with numpyro.plate("observations", syn_power.shape[0]):
-            power = numpyro.sample("power", numpyro.distributions.Normal(syn_power, 0.1), obs=obs)
-        
-        #out = {"syn_subpower": syn_subpower,
-        #       "syn_elev": elev,
-        #       "syn_ranges": syn_ranges}
-        return elev#syn_subpower
-    def f(self, carry, noise_t):
-        beta, z_prev, tau = carry
-        z_t = beta*z_prev + tau*noise_t
-        z_prev = z_t
-        return (beta, z_prev, tau), z_t
-    def bayesian_model_numpyro_test(self, elevations, flags, segments, obs=None):
-        # Bias terms
-        #N_flags = np.unique(flags).shape[0]
-        #N_segments = np.unique(segments).shape[0]
-        N_elev = elevations.shape[0]
-        
-        # ==================================================================================================
-            
-                
-        # Determine wavefront shape
-        sat_altitude = self.altimetry.data["altitude"][self.location]
-        wavefront_height = wavefront(sat_altitude, self.along_centered)
-        
-        # Smooth the surface
-        prior_vals_elev = jnp.array([[0.2 if flags[i] == 0 else 3] for i in range(flags.shape[0])]).ravel()
-        lower_prior = elevations - prior_vals_elev
-        upper_prior = elevations + prior_vals_elev
-        #with numpyro.plate("elevPlate", elevations.shape[0]):
-        #elev = numpyro.sample("elev", numpyro.distributions.Normal(elevations, jnp.ones(elevations.shape[0])*0.25))
-        elev = numpyro.sample("elev", numpyro.distributions.Uniform(lower_prior, upper_prior))
-        coincidents = np.eye(N_elev, k=1)+np.eye(N_elev,k=-1)
-        #elev = numpyro.sample("elev", numpyro.distributions.CAR(elevations, 0.75, 5, coincidents))
-        #    elev = numpyro.sample("elev", numpyro.distributions.GaussianRandomWalk(scale=0.1, num_steps=N_elev)) + elevations
-        # Limit the elevations
-        lim = 3
-        elev = jnp.where((elev-elevations)>lim, elevations+lim, elev)
-        elev = jnp.where((elev-elevations)<-lim, elevations-lim, elev)
-        # Smooth the surface    
-        #n_smooth = 3
-        #elev = jnp.convolve(jnp.ones(n_smooth), elev, mode="same")/n_smooth
-        
-        prior_vals_ref = jnp.array([[40 if flags[i] == 0 else 30] for i in range(flags.shape[0])]).ravel()
-        ref_posterior = numpyro.param("ref_posterior", prior_vals_ref, 
-                                      constraint=numpyro.distributions.constraints.positive)
-        #ref = numpyro.sample("ref", numpyro.distributions.Dirichlet(ref_posterior))
-        #with numpyro.plate("refPlate", elev.shape[0]):
-        prior_vals_ref_low = jnp.array([[0.1 if flags[i] == 0 else 0.1] for i in range(flags.shape[0])]).ravel()
-        prior_vals_ref_high = jnp.array([[2 if flags[i] == 0 else 4.0] for i in range(flags.shape[0])]).ravel()
-        ref = numpyro.sample("ref", numpyro.distributions.Uniform(prior_vals_ref_low,prior_vals_ref_high))
-
-        n_smooth = 5
-        ref = jnp.convolve(jnp.ones(n_smooth), ref, mode="same")/n_smooth
-        
-        # Corrected elevations
-        elev_corrected = elev - wavefront_height
-        
-        # Determine range
-        ranges = self.altimetry.data["heights"][self.location]
-
-        N = 256#ranges.shape[0]
-        synth_ranges = ranges[:N]
-        
-        envelope = jnp.zeros(N)
-        #synth_rangepower = jnp.zeros((np.unique(self.segment_id).shape[0], N))
-        
-        waveform_corr = jnp.exp(-0.01*(jnp.array(self.along_centered)/(1e3))**2)**2
-        with numpyro.plate("elevPlate", elev.shape[0]) as i:
-            arg = jnp.argmin(abs(synth_ranges - jnp.array([elev_corrected[i]]).T), axis=1)
-            
-            envelope = envelope.at[arg].add(3*ref[i]*waveform_corr[i])
-            envelope = envelope.at[arg-1].add(1*ref[i]*waveform_corr[i])
-            envelope = envelope.at[arg+1].add(1*ref[i]*waveform_corr[i])
-            
-        #envelope = envelope.at[0:5].set(0)
-        #envelope = envelope.at[-5:-1].set(0)
-                                        
-        # Normalize the envelope
-        n_smooth = 3
-        envelope = jnp.convolve(jnp.ones(n_smooth), envelope, mode="same")/n_smooth
-        envelope = envelope/jnp.max(envelope)
-        syn_power = numpyro.deterministic("syn_power", envelope)
-        # ==================================================================================================        
-        with numpyro.plate("observations", syn_power.shape[0]):
-            power = numpyro.sample("power", numpyro.distributions.Normal(syn_power, 0.01), obs=obs)
-        
-        return elev #syn_subpower
-    
-    def bayesian_model_numpyro_test_2(self, elevations, flags, segments, obs=None):
         
         N_segments = np.unique(segments).shape[0]
         elevations = jnp.reshape(elevations, (N_segments, -1))
@@ -789,7 +557,7 @@ class model():
                       save_samples=False,
                       save_predictions=True,
                       savefile_dir = "",
-                      engine="pyro"):
+                      engine="numpyro"):
         
         print("=========================================")
         print("Prepare data to pyro model")
@@ -804,6 +572,7 @@ class model():
         
         match engine:
             case "pyro":
+                assert False, "Pyro not yet implemented"
                 print("Run Pyro model")
                 
                 # Convert to torch tensors
@@ -851,7 +620,7 @@ class model():
                 print("N Samples: {}, N Warmup: {}, N Chains: {}".format(N_SAMPLES,
                                                                          N_WARMUP,
                                                                          N_CHAINS))
-                nuts_kernel = numpyro.infer.NUTS(self.bayesian_model_numpyro_test_2)
+                nuts_kernel = numpyro.infer.NUTS(self.bayesian_model)
                 mcmc = numpyro.infer.MCMC(nuts_kernel,
                                           num_samples=N_SAMPLES,
                                           num_warmup=N_WARMUP, 
@@ -877,6 +646,7 @@ class model():
         print("Get predictions")
         match engine:
             case "pyro":
+                assert False, "Pyro not yet implemented"
                 predictive = Predictive(self.bayesian_model, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
                                         return_sites=("power", "_RETURN"))
                 predictive_samples = predictive(elevations=elevations_train,
@@ -890,7 +660,7 @@ class model():
                             "along": along_train.detach().numpy().tolist()
                 }       
             case "numpyro":
-                predictive = numpyro.infer.Predictive(self.bayesian_model_numpyro_test_2, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
+                predictive = numpyro.infer.Predictive(self.bayesian_model, posterior_samples=mcmc.get_samples(), num_samples=N_SAMPLES,
                                                         return_sites=("elev","syn_power","power", "offset", "_RETURN"))
                 predictive_samples = predictive(rng_key_,
                                                 elevations=elevations_train,
